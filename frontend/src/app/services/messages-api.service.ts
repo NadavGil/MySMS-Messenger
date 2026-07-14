@@ -14,6 +14,12 @@ import { ListMessagesResponse, Message, SendMessagePayload } from '../models/mes
  */
 @Injectable({ providedIn: 'root' })
 export class MessagesApiService {
+  // Convention: `environment.apiBaseUrl` is ONLY an origin (or '' for a
+  // same-origin/reverse-proxied deploy) — it must never itself contain
+  // `/api`. This service is the single place that appends the API path, so
+  // all environment files stay consistent and can't silently double up the
+  // `/api` segment again (see environment.production.ts comment; QA report
+  // round1 M2 — production previously resolved to `/api/api/v1/messages`).
   private readonly baseUrl = `${environment.apiBaseUrl}/api/v1/messages`;
 
   constructor(private readonly http: HttpClient) {}

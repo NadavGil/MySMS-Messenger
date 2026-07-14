@@ -31,3 +31,21 @@ Rails.configuration.x.sms_gateway_class =
   }.fetch(provider_choice) do
     raise ArgumentError, "Unknown SMS_PROVIDER=#{provider_choice.inspect}; expected 'fake' or 'twilio'"
   end
+
+# CP11: fail loudly at boot, not on the first request, if the real Twilio
+# gateway is selected without its required credentials. TwilioSmsGateway
+# itself uses ENV.fetch (no defaults) for TWILIO_ACCOUNT_SID/AUTH_TOKEN/
+# FROM_NUMBER, so a missing var would eventually raise a bare KeyError the
+# first time someone actually sends a message - checking here instead gives
+# a single, clear, actionable startup error naming exactly which var(s) are
+# missing, before the app ever accepts traffic.
+if provider_choice == "twilio"
+  required_twilio_vars = %w[TWILIO_ACCOUNT_SID TWILIO_AUTH_TOKEN TWILIO_FROM_NUMBER]
+  missing_twilio_vars = required_twilio_vars.reject { |var| !ENV[var].nil? && !ENV[var].empty? }
+
+  if missing_twilio_vars.any?
+    raise ArgumentError,
+          "SMS_PROVIDER=twilio but missing required ENV var(s): #{missing_twilio_vars.join(', ')}. " \
+          "Set these (see .env.example) before starting the app with the real Twilio gateway."
+  end
+end

@@ -1,6 +1,8 @@
 import { HttpClientTestingModule, HttpTestingController } from '@angular/common/http/testing';
 import { TestBed } from '@angular/core/testing';
 import { environment } from '../../environments/environment';
+import { environment as prodEnvironment } from '../../environments/environment.production';
+import { environment as devEnvironment } from '../../environments/environment.development';
 import { ListMessagesResponse, Message } from '../models/message.model';
 import { MessagesApiService } from './messages-api.service';
 
@@ -76,5 +78,25 @@ describe('MessagesApiService', () => {
     expect(req.request.method).toBe('GET');
     expect(req.request.withCredentials).toBeTrue();
     req.flush(mockResponse);
+  });
+
+  describe('environment apiBaseUrl convention (regression test for QA report round1 M2)', () => {
+    // Every environment file's `apiBaseUrl` must be an origin-or-empty value
+    // ONLY, never a path that includes `/api` — otherwise the fixed
+    // `/api/v1/messages` suffix appended in MessagesApiService would produce
+    // a double `/api/api/v1/messages`, exactly as production previously did.
+    const buildUrl = (apiBaseUrl: string) => `${apiBaseUrl}/api/v1/messages`;
+
+    it('does not double-prefix /api in the production environment', () => {
+      const url = buildUrl(prodEnvironment.apiBaseUrl);
+      expect(url).toBe('/api/v1/messages');
+      expect(url).not.toContain('/api/api');
+    });
+
+    it('does not double-prefix /api in the development environment', () => {
+      const url = buildUrl(devEnvironment.apiBaseUrl);
+      expect(url).toBe('http://localhost:3000/api/v1/messages');
+      expect(url).not.toContain('/api/api');
+    });
   });
 });
