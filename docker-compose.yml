@@ -1,0 +1,14 @@
+# Local MongoDB for MySMS Messenger (tech-design.md §2.9, CP12).
+# Backend reads the same MONGO_URI regardless of Docker/Atlas (12-factor,
+# HLD §7.2) - default matches config/mongoid.yml's development default.
+services:
+  mongo:
+    image: mongo:7
+    container_name: mysms_mongo
+    ports:
+      - "27017:27017"
+    volumes:
+      - mysms_mongo_data:/data/db
+
+volumes:
+  mysms_mongo_data:
