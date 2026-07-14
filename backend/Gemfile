@@ -1,0 +1,27 @@
+source "https://rubygems.org"
+git_source(:github) { |repo| "https://github.com/#{repo}.git" }
+
+ruby "3.3.0"
+
+# Rails 7.1, API-only. --skip-active-record: persistence is Mongoid, not AR.
+gem "rails", "~> 7.1.0"
+gem "puma", ">= 5.0"
+gem "bootsnap", require: false
+
+# MongoDB ODM behind the repository abstraction (see app/repositories).
+gem "mongoid", "~> 9.0"
+
+# Real SMS gateway (see app/gateways/twilio_sms_gateway.rb).
+gem "twilio-ruby", "~> 7.0"
+
+# CORS for the Angular dev server (config/initializers/cors.rb, CP12).
+gem "rack-cors"
+
+group :development, :test do
+  gem "rspec-rails", "~> 6.1"
+  gem "dotenv-rails"
+end
+
+group :test do
+  gem "rack-test"
+end
