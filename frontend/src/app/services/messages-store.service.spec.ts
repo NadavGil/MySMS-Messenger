@@ -51,7 +51,7 @@ describe('MessagesStoreService', () => {
     service.loading$.subscribe((l) => (state.loading = l));
 
     expect(state.error).toBe('Failed to load message history. Please try again.');
-    expect(state.loading).toBeFalse();
+    expect(state.loading).toBe(false);
   });
 
   it('does not let a stale, slower refresh() response overwrite a newer one (QA report round1 M4)', () => {
@@ -67,7 +67,7 @@ describe('MessagesStoreService', () => {
     // request — HttpClientTestingModule surfaces this as `cancelled: true`
     // on the original TestRequest.
     service.refresh();
-    expect(firstReq.cancelled).toBeTrue();
+    expect(firstReq.cancelled).toBe(true);
 
     const secondReq = httpMock.expectOne(baseUrl);
     secondReq.flush({ count: 1, messages: [newerMessage] });

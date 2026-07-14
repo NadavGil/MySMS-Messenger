@@ -41,7 +41,7 @@ describe('MessagesApiService', () => {
 
     const req = httpMock.expectOne(baseUrl);
     expect(req.request.method).toBe('POST');
-    expect(req.request.withCredentials).toBeTrue();
+    expect(req.request.withCredentials).toBe(true);
     expect(req.request.body).toEqual(payload);
     req.flush(mockResponse);
   });
@@ -76,7 +76,7 @@ describe('MessagesApiService', () => {
 
     const req = httpMock.expectOne(baseUrl);
     expect(req.request.method).toBe('GET');
-    expect(req.request.withCredentials).toBeTrue();
+    expect(req.request.withCredentials).toBe(true);
     req.flush(mockResponse);
   });
 

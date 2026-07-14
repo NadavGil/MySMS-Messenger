@@ -1,5 +1,6 @@
 import { HttpClientTestingModule, HttpTestingController } from '@angular/common/http/testing';
 import { ComponentFixture, TestBed } from '@angular/core/testing';
+import { vi } from 'vitest';
 import { environment } from '../../../environments/environment';
 import { MessagesStoreService } from '../../services/messages-store.service';
 import { NewMessageComponent } from './new-message.component';
@@ -30,31 +31,31 @@ describe('NewMessageComponent', () => {
   });
 
   it('starts with an invalid, empty form and Submit disabled', () => {
-    expect(component.form.invalid).toBeTrue();
+    expect(component.form.invalid).toBe(true);
     const submitButton: HTMLButtonElement = fixture.nativeElement.querySelector('.submit-button');
-    expect(submitButton.disabled).toBeTrue();
+    expect(submitButton.disabled).toBe(true);
   });
 
   it('is invalid when the phone number is not E.164', () => {
     component.form.controls.toNumber.setValue('0123');
     component.form.controls.body.setValue('hello');
-    expect(component.form.invalid).toBeTrue();
+    expect(component.form.invalid).toBe(true);
   });
 
   it('becomes valid with a proper E.164 number and a non-empty body', () => {
     component.form.controls.toNumber.setValue('+14155550123');
     component.form.controls.body.setValue('hello');
-    expect(component.form.valid).toBeTrue();
+    expect(component.form.valid).toBe(true);
 
     fixture.detectChanges();
     const submitButton: HTMLButtonElement = fixture.nativeElement.querySelector('.submit-button');
-    expect(submitButton.disabled).toBeFalse();
+    expect(submitButton.disabled).toBe(false);
   });
 
   it('rejects a body over 250 characters', () => {
     component.form.controls.toNumber.setValue('+14155550123');
     component.form.controls.body.setValue('a'.repeat(251));
-    expect(component.form.invalid).toBeTrue();
+    expect(component.form.invalid).toBe(true);
     expect(component.form.controls.body.errors?.['maxlength']).toBeTruthy();
   });
 
@@ -90,7 +91,7 @@ describe('NewMessageComponent', () => {
     // 251 emoji => 251 codepoints, 502 UTF-16 units — raw `.length` maxlength
     // would have accepted this well past the true 250-codepoint limit.
     component.form.controls.body.setValue('🎉'.repeat(251));
-    expect(component.form.invalid).toBeTrue();
+    expect(component.form.invalid).toBe(true);
     expect(component.form.controls.body.errors?.['maxlength']).toBeTruthy();
   });
 
@@ -108,7 +109,13 @@ describe('NewMessageComponent', () => {
 
   it('sends the message, clears the form, and refreshes the store on success', () => {
     const store = TestBed.inject(MessagesStoreService);
-    spyOn(store, 'refresh');
+    // Vitest's spyOn calls through to the real implementation by default
+    // (unlike Jasmine's, which stubs unless .and.callThrough() is added) -
+    // stub it here since this test only asserts refresh() was invoked, not
+    // what it does; the real refresh() behavior is covered by
+    // messages-store.service.spec.ts and would otherwise leave an
+    // un-flushed GET request open against httpMock.
+    vi.spyOn(store, 'refresh').mockImplementation(() => {});
 
     component.form.controls.toNumber.setValue('+14155550123');
     component.form.controls.body.setValue('hello');
@@ -127,7 +134,7 @@ describe('NewMessageComponent', () => {
 
     expect(component.form.controls.body.value).toBe('');
     expect(store.refresh).toHaveBeenCalled();
-    expect(component.submitting).toBeFalse();
+    expect(component.submitting).toBe(false);
   });
 
   it('shows an inline error message when the send fails', () => {
@@ -142,7 +149,7 @@ describe('NewMessageComponent', () => {
     );
 
     expect(component.errorMessage).toContain('must be 250 characters or fewer');
-    expect(component.submitting).toBeFalse();
+    expect(component.submitting).toBe(false);
   });
 
   it('does not submit while the form is invalid', () => {
