@@ -16,7 +16,7 @@
             <span class="message-timestamp">{{ message.created_at | utcTimestamp }}</span>
           </div>
           <div class="message-body">{{ message.body }}</div>
-          <div class="message-char-count">{{ message.body.length }}/{{ bodyMaxLength }}</div>
+          <div class="message-char-count">{{ bodyLength(message.body) }}/{{ bodyMaxLength }}</div>
         </li>
       }
     </ul>

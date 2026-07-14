@@ -4,6 +4,7 @@ import { Observable } from 'rxjs';
 import { Message } from '../../models/message.model';
 import { MessagesStoreService } from '../../services/messages-store.service';
 import { UtcTimestampPipe } from '../../pipes/utc-timestamp.pipe';
+import { codepointLength } from '../../utils/text-length.util';
 
 const BODY_MAX_LENGTH = 250;
 
@@ -44,5 +45,15 @@ export class MessageHistoryComponent implements OnInit {
 
   trackById(_index: number, message: Message): string {
     return message.id;
+  }
+
+  /**
+   * Unicode codepoint count for a message body (not UTF-16 `.length`) so the
+   * per-message count agrees with the New Message form's counter/validator
+   * and with the eventual backend Ruby `String#length` validation (QA
+   * report round1 N1).
+   */
+  bodyLength(body: string): number {
+    return codepointLength(body);
   }
 }

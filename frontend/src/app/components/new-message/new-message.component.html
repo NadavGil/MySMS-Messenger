@@ -12,11 +12,18 @@
 
   <label class="field">
     <span class="field-label">Message</span>
+    <!--
+      No native [maxlength] attribute here on purpose: the browser's
+      HTMLTextAreaElement.maxLength truncates by UTF-16 code unit, which
+      would silently disagree with the codepoint-based counter/validator
+      below (QA report round1 N1). Length is enforced via the
+      maxCodepointLength reactive-forms validator + Submit-disabled state
+      instead.
+    -->
     <textarea
       class="body-input"
       rows="6"
       formControlName="body"
-      [maxlength]="bodyMaxLength"
       aria-label="Message"
     ></textarea>
   </label>

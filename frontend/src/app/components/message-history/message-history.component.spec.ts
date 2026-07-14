@@ -76,6 +76,28 @@ describe('MessageHistoryComponent', () => {
     expect(firstCard.querySelector('.message-char-count')?.textContent?.trim()).toBe('11/250');
   });
 
+  it('counts emoji by codepoint, not UTF-16 code unit, in the per-message char count (QA report round1 N1)', () => {
+    // '🎉' is a single Unicode codepoint but a UTF-16 surrogate pair
+    // (raw `.length` === 2). Codepoint-accurate counting must report 6.
+    const emojiMessage: Message = {
+      id: '3',
+      to_number: '+14155550123',
+      body: 'hi 🎉🎉🎉',
+      status: 'sent',
+      external_sid: 'FAKE-3',
+      created_at: '2020-05-17T11:18:45Z',
+    };
+
+    fixture.detectChanges();
+    const req = httpMock.expectOne(baseUrl);
+    req.flush({ count: 1, messages: [emojiMessage] });
+    fixture.detectChanges();
+
+    expect(emojiMessage.body.length).toBe(9); // UTF-16 units: 'hi ' (3) + 3 surrogate pairs (6)
+    const card: HTMLElement = fixture.nativeElement.querySelector('.message-card');
+    expect(card.querySelector('.message-char-count')?.textContent?.trim()).toBe('6/250');
+  });
+
   it('shows the empty state when there are no messages', () => {
     fixture.detectChanges();
     const req = httpMock.expectOne(baseUrl);

@@ -3,6 +3,7 @@ import { Component } from '@angular/core';
 import { FormControl, FormGroup, ReactiveFormsModule, Validators } from '@angular/forms';
 import { MessagesApiService } from '../../services/messages-api.service';
 import { MessagesStoreService } from '../../services/messages-store.service';
+import { codepointLength, maxCodepointLength } from '../../utils/text-length.util';
 
 const BODY_MAX_LENGTH = 250;
 
@@ -37,7 +38,11 @@ export class NewMessageComponent {
     }),
     body: new FormControl('', {
       nonNullable: true,
-      validators: [Validators.required, Validators.maxLength(BODY_MAX_LENGTH)],
+      // Codepoint-based (not Validators.maxLength's UTF-16 `.length`) so the
+      // client-side 250 limit matches what the (future) Ruby backend will
+      // validate on `String#length` — see utils/text-length.util.ts and QA
+      // report round1 N1.
+      validators: [Validators.required, maxCodepointLength(BODY_MAX_LENGTH)],
     }),
   });
 
@@ -50,7 +55,11 @@ export class NewMessageComponent {
   ) {}
 
   get bodyLength(): number {
-    return this.form.controls.body.value?.length ?? 0;
+    // Unicode codepoint count (not UTF-16 `.length`) so the displayed N/250
+    // counter agrees with the maxCodepointLength validator above and with
+    // the eventual backend Ruby `String#length` validation (QA report
+    // round1 N1).
+    return codepointLength(this.form.controls.body.value ?? '');
   }
 
   onSubmit(): void {

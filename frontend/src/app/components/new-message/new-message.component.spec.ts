@@ -70,6 +70,30 @@ describe('NewMessageComponent', () => {
     expect(component.bodyLength).toBe(0);
   });
 
+  it('counts emoji by codepoint, not UTF-16 code unit (QA report round1 N1)', () => {
+    // '🎉' is a single Unicode codepoint but a UTF-16 surrogate pair, so raw
+    // JS `.length` would report 6 here; codepoint-accurate counting must
+    // report 3.
+    const body = '🎉🎉🎉';
+    expect(body.length).toBe(6);
+
+    component.form.controls.body.setValue(body);
+    fixture.detectChanges();
+
+    expect(component.bodyLength).toBe(3);
+    const counter: HTMLElement = fixture.nativeElement.querySelector('.char-counter');
+    expect(counter.textContent?.trim()).toBe('3/250');
+  });
+
+  it('rejects a body over 250 codepoints even when built from surrogate-pair emoji', () => {
+    component.form.controls.toNumber.setValue('+14155550123');
+    // 251 emoji => 251 codepoints, 502 UTF-16 units — raw `.length` maxlength
+    // would have accepted this well past the true 250-codepoint limit.
+    component.form.controls.body.setValue('🎉'.repeat(251));
+    expect(component.form.invalid).toBeTrue();
+    expect(component.form.controls.body.errors?.['maxlength']).toBeTruthy();
+  });
+
   it('Clear resets the form and any error message', () => {
     component.form.controls.toNumber.setValue('+14155550123');
     component.form.controls.body.setValue('hello');
