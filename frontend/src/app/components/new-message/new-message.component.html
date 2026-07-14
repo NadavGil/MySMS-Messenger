@@ -1,0 +1,39 @@
+<form class="new-message-form" [formGroup]="form" (ngSubmit)="onSubmit()">
+  <label class="field">
+    <span class="field-label">Phone Number</span>
+    <input
+      type="tel"
+      class="phone-input"
+      formControlName="toNumber"
+      placeholder="+14155550123"
+      aria-label="Phone Number"
+    />
+  </label>
+
+  <label class="field">
+    <span class="field-label">Message</span>
+    <textarea
+      class="body-input"
+      rows="6"
+      formControlName="body"
+      [maxlength]="bodyMaxLength"
+      aria-label="Message"
+    ></textarea>
+  </label>
+  <div class="char-counter">{{ bodyLength }}/{{ bodyMaxLength }}</div>
+
+  @if (errorMessage) {
+    <p class="error-message" role="alert">{{ errorMessage }}</p>
+  }
+
+  <div class="actions">
+    <a class="clear-link" href="javascript:void(0)" (click)="onClear()">Clear</a>
+    <button
+      type="submit"
+      class="submit-button"
+      [disabled]="form.invalid || submitting"
+    >
+      Submit
+    </button>
+  </div>
+</form>

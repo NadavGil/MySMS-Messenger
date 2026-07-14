@@ -1,0 +1,80 @@
+import { HttpClientTestingModule, HttpTestingController } from '@angular/common/http/testing';
+import { TestBed } from '@angular/core/testing';
+import { environment } from '../../environments/environment';
+import { ListMessagesResponse, Message } from '../models/message.model';
+import { MessagesApiService } from './messages-api.service';
+
+describe('MessagesApiService', () => {
+  let service: MessagesApiService;
+  let httpMock: HttpTestingController;
+  const baseUrl = `${environment.apiBaseUrl}/api/v1/messages`;
+
+  beforeEach(() => {
+    TestBed.configureTestingModule({
+      imports: [HttpClientTestingModule],
+      providers: [MessagesApiService],
+    });
+    service = TestBed.inject(MessagesApiService);
+    httpMock = TestBed.inject(HttpTestingController);
+  });
+
+  afterEach(() => {
+    httpMock.verify();
+  });
+
+  it('sendMessage() POSTs to /api/v1/messages with withCredentials and the payload', () => {
+    const payload = { to_number: '+14155550123', body: 'Hello there' };
+    const mockResponse: Message = {
+      id: '1',
+      to_number: payload.to_number,
+      body: payload.body,
+      status: 'sent',
+      external_sid: 'FAKE-ab12cd34',
+      created_at: '2020-05-17T11:18:45Z',
+    };
+
+    service.sendMessage(payload).subscribe((res) => {
+      expect(res).toEqual(mockResponse);
+    });
+
+    const req = httpMock.expectOne(baseUrl);
+    expect(req.request.method).toBe('POST');
+    expect(req.request.withCredentials).toBeTrue();
+    expect(req.request.body).toEqual(payload);
+    req.flush(mockResponse);
+  });
+
+  it('listMessages() GETs /api/v1/messages with withCredentials and maps the response', () => {
+    const mockResponse: ListMessagesResponse = {
+      count: 2,
+      messages: [
+        {
+          id: '1',
+          to_number: '+14155550123',
+          body: 'first',
+          status: 'sent',
+          external_sid: 'FAKE-1',
+          created_at: '2020-05-17T11:18:45Z',
+        },
+        {
+          id: '2',
+          to_number: '+14155550123',
+          body: 'second',
+          status: 'sent',
+          external_sid: 'FAKE-2',
+          created_at: '2020-05-16T09:02:11Z',
+        },
+      ],
+    };
+
+    service.listMessages().subscribe((res) => {
+      expect(res).toEqual(mockResponse);
+      expect(res.count).toBe(2);
+    });
+
+    const req = httpMock.expectOne(baseUrl);
+    expect(req.request.method).toBe('GET');
+    expect(req.request.withCredentials).toBeTrue();
+    req.flush(mockResponse);
+  });
+});
