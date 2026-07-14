@@ -3,13 +3,20 @@ require "securerandom"
 module Repositories
   # Test/dev fake (tech-design.md §3.3). Backed by an in-process Array —
   # no Mongo, no network. Used by RSpec specs and by any run with
-  # MESSAGE_REPOSITORY=in_memory (fast demos). Not shared across processes;
-  # each instance owns its own store, which is exactly what specs want.
+  # MESSAGE_REPOSITORY=in_memory (fast demos).
+  #
+  # THREAD-SAFETY (qa-report-round1.md N2): now that Services::Container
+  # memoizes a single shared instance per process (fix for Blocker B1), this
+  # instance can be mutated concurrently by multiple Puma threads. `@records`
+  # is guarded by a Mutex around every read/write so `create` and
+  # `find_for_owner` can't race (e.g. a concurrent push corrupting the array,
+  # or a read observing a half-written state).
   class InMemoryMessageRepository
     include MessageRepositoryInterface
 
     def initialize
       @records = []
+      @mutex = Mutex.new
     end
 
     def create(attrs)
@@ -22,19 +29,21 @@ module Repositories
         external_sid: attrs[:external_sid],
         created_at: Time.now.utc
       )
-      @records << message
+      @mutex.synchronize { @records << message }
       message
     end
 
     def find_for_owner(owner_id)
-      @records.select { |message| message.owner_id == owner_id }
-              .sort_by(&:created_at)
-              .reverse
+      @mutex.synchronize do
+        @records.select { |message| message.owner_id == owner_id }
+                .sort_by(&:created_at)
+                .reverse
+      end
     end
 
     # Test helper only — not part of the documented interface.
     def clear!
-      @records.clear
+      @mutex.synchronize { @records.clear }
     end
   end
 end

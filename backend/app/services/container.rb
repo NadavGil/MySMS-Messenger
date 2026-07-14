@@ -23,8 +23,23 @@ module Services
   module Container
     module_function
 
+    # BUGFIX (qa-report-round1.md, Blocker B1): calling `.new` fresh on every
+    # invocation discarded InMemoryMessageRepository's `@records` array
+    # between requests, so MESSAGE_REPOSITORY=in_memory (the documented fast
+    # demo mode) silently lost every message the instant a second request
+    # came in. InMemoryMessageRepository is process-local state, so it must
+    # be a memoized singleton per Rails process. MongoMessageRepository holds
+    # no in-process state at all (Mongo itself is the store), so it stays
+    # cheap/stateless and is intentionally NOT memoized — building it fresh
+    # per call is correct and side-effect-free.
     def message_repository
-      Rails.configuration.x.message_repository_class.constantize.new
+      klass = Rails.configuration.x.message_repository_class.constantize
+
+      if klass == Repositories::InMemoryMessageRepository
+        @in_memory_message_repository ||= klass.new
+      else
+        klass.new
+      end
     end
 
     def sms_gateway
@@ -37,6 +52,15 @@ module Services
 
     def list_messages_service
       ListMessagesService.new(repository: message_repository)
+    end
+
+    # Test-only hook: clears the memoized in-memory repository singleton so
+    # specs (and long-lived console sessions) get a clean slate instead of
+    # leaking records across examples. RSpec runs many examples in the same
+    # OS process, where the memoized instance above would otherwise persist
+    # across examples; spec/rails_helper.rb calls this in a `before(:each)`.
+    def reset!
+      @in_memory_message_repository = nil
     end
   end
 end

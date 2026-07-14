@@ -59,4 +59,26 @@ RSpec.describe "Services::Container resolution" do
 
     expect(Services::Container.sms_gateway).to be_a(Gateways::TwilioSmsGateway)
   end
+
+  # Regression test for qa-report-round1.md Blocker B1: the container must
+  # hand back the SAME in-memory repository instance across calls, or state
+  # written by one call (e.g. a POST) is invisible to the next (e.g. a GET).
+  it "memoizes a single shared in_memory repository instance across calls" do
+    resolve!(message_repository: "Repositories::InMemoryMessageRepository", sms_gateway: "Gateways::FakeSmsGateway")
+
+    first = Services::Container.message_repository
+    second = Services::Container.message_repository
+
+    expect(first).to equal(second)
+  end
+
+  it "#reset! clears the memoized in_memory repository so a fresh instance is built next" do
+    resolve!(message_repository: "Repositories::InMemoryMessageRepository", sms_gateway: "Gateways::FakeSmsGateway")
+
+    before_reset = Services::Container.message_repository
+    Services::Container.reset!
+    after_reset = Services::Container.message_repository
+
+    expect(after_reset).not_to equal(before_reset)
+  end
 end
