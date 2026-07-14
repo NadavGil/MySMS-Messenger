@@ -17,20 +17,37 @@ module Gateways
     FAILURE_SIMULATION_NUMBER = "+10000000000".freeze
 
     def send_sms(to:, body:)
-      Rails.logger.info("[FakeSmsGateway] to=#{to} body=#{body.inspect}")
-
       if to == FAILURE_SIMULATION_NUMBER
-        return SmsGatewayInterface::Result.new(
+        result = SmsGatewayInterface::Result.new(
           success: false,
           external_sid: nil,
           error: "FakeSmsGateway: simulated failure for #{FAILURE_SIMULATION_NUMBER}"
         )
+        log_send(to: to, body: body, result: result)
+        return result
       end
 
-      SmsGatewayInterface::Result.new(
+      result = SmsGatewayInterface::Result.new(
         success: true,
         external_sid: "SM#{SecureRandom.hex(16)}",
         error: nil
+      )
+      log_send(to: to, body: body, result: result)
+      result
+    end
+
+    private
+
+    # security-review-round1.md M5: message bodies are arbitrary user-typed
+    # free text that can carry PII, so never write the raw body to logs (logs
+    # are often shipped to third-party aggregators/retained indefinitely).
+    # Log only metadata (destination + body length + fake sid), matching the
+    # discipline already followed by TwilioSmsGateway, which logs nothing at
+    # all about the message content or credentials.
+    def log_send(to:, body:, result:)
+      Rails.logger.info(
+        "[FakeSmsGateway] to=#{to} body_length=#{body.to_s.length} " \
+        "success=#{result.success} external_sid=#{result.external_sid.inspect}"
       )
     end
   end

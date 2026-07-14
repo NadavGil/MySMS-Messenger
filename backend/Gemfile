@@ -17,6 +17,13 @@ gem "twilio-ruby", "~> 7.0"
 # CORS for the Angular dev server (config/initializers/cors.rb, CP12).
 gem "rack-cors"
 
+# Rate limiting/throttling (security-review-round1.md H1,
+# config/initializers/rack_attack.rb). Protects POST /api/v1/messages from
+# cost-abuse once real Twilio credentials are configured (SMS_PROVIDER=twilio) -
+# each message send costs real money, and the only "auth" today is a
+# self-issued signed cookie, so an unthrottled endpoint is an open wallet.
+gem "rack-attack"
+
 group :development, :test do
   gem "rspec-rails", "~> 6.1"
   gem "dotenv-rails"

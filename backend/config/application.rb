@@ -27,6 +27,12 @@ module MysmsMessenger
     # even in API-only mode.
     config.middleware.use ActionDispatch::Cookies
 
+    # Rate limiting (security-review-round1.md H1) -
+    # config/initializers/rack_attack.rb defines the actual throttle rules;
+    # this wires the middleware into the stack (API-only mode does not add
+    # it automatically the way a full Rails app would).
+    config.middleware.use Rack::Attack
+
     # Namespace for config-driven wiring resolved in
     # config/initializers/container.rb (CP3).
     config.x.message_repository_class = nil

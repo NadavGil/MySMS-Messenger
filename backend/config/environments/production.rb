@@ -15,4 +15,14 @@ Rails.application.configure do
   config.force_ssl = true
 
   config.silence_healthcheck_path = "/health"
+
+  # security-review-round1.md M4 / fix item 7: no config/master.key or
+  # config/credentials.yml.enc is committed to this repo (verified - none
+  # exist), so Rails has no committed secret to derive secret_key_base from
+  # in production. Require it explicitly from ENV instead of silently
+  # falling back to an uninitialized/missing credentials store - this fails
+  # loudly at boot if SECRET_KEY_BASE is not set, rather than booting with a
+  # key nobody generated/rotated/tracked. CurrentIdentity's signed cookie
+  # (cookies.signed) depends directly on this value.
+  config.secret_key_base = ENV.fetch("SECRET_KEY_BASE")
 end
