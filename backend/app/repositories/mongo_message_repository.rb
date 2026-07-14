@@ -1,4 +1,11 @@
 module Repositories
+  # Raised by MongoMessageRepository when the underlying Mongo driver fails
+  # (connection refused, replica-set failover, timeout, etc). Callers
+  # (services/controllers) can rescue this one repository-layer error
+  # instead of needing to know about Mongo::Error/Mongo::Error::* internals
+  # (qa-report-round1.md N3).
+  class RepositoryError < StandardError; end
+
   # Concrete MongoDB-backed implementation (tech-design.md §3.2). Wraps
   # MessageDocument (Mongoid) and only ever hands Domain::Message objects
   # back across the DAL boundary.
@@ -14,6 +21,8 @@ module Repositories
         external_sid: attrs[:external_sid]
       )
       to_domain(document)
+    rescue Mongo::Error => e
+      raise_repository_error("create", e)
     end
 
     def find_for_owner(owner_id)
@@ -21,9 +30,22 @@ module Repositories
         .where(owner_id: owner_id)
         .order(created_at: :desc)
         .map { |document| to_domain(document) }
+    rescue Mongo::Error => e
+      raise_repository_error("find_for_owner", e)
     end
 
     private
+
+    def raise_repository_error(operation, error)
+      # Log the real driver exception for operators, but never leak it raw
+      # past this boundary — controllers/services should only ever see a
+      # RepositoryError (qa-report-round1.md N3: a Mongo outage should
+      # surface as a structured 5xx, not a leaked driver stack trace).
+      Rails.logger.error(
+        "[MongoMessageRepository##{operation}] Mongo driver error: #{error.class}: #{error.message}"
+      )
+      raise RepositoryError, "Message storage is temporarily unavailable (#{operation} failed)"
+    end
 
     def to_domain(document)
       Domain::Message.new(
