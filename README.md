@@ -43,6 +43,26 @@ cd backend
 bundle exec rspec
 ```
 
+**Note on test execution in restricted/offline environments:** the RSpec
+request specs under `backend/spec/` are written and document the intended
+request-spec coverage, but in sandboxes without network access to
+rubygems.org, `bundle install` cannot fetch Rails/Mongoid/RSpec/twilio-ruby/
+rack-attack/rack-cors, so those specs cannot actually be executed there —
+they remain accurate documentation for a real Rails environment where
+`bundle install` succeeds.
+
+For genuine, zero-gem, actually-executing coverage of the
+framework-independent core (domain object, in-memory DAL, services,
+fake gateway), see `backend/test/` — a small Minitest suite that only
+requires Ruby's bundled stdlib (`minitest`, `securerandom`, `logger`) and
+runs today with no `bundle install` step at all:
+
+```
+ruby backend/test/run_all.rb
+```
+
+(or run any single file directly, e.g. `ruby -Ibackend/test backend/test/services/send_message_service_test.rb`).
+
 ## 3. Frontend (Angular SPA)
 
 ```
