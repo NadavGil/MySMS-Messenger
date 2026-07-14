@@ -18,6 +18,15 @@ module Api
         end
       end
 
+      # GET /api/v1/messages
+      # Newest-first, scoped ONLY to the current CurrentIdentity owner_id
+      # (tech-design.md §6.2 / HLD §5 scoping requirement). `count` feeds the
+      # wireframe's "Message History (N)" header.
+      def index
+        messages = Services::Container.list_messages_service.call(owner_id: current_identity)
+        render json: { count: messages.size, messages: messages.map { |m| serialize(m) } }
+      end
+
       private
 
       def serialize(message)
