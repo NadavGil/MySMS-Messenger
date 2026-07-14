@@ -1,5 +1,6 @@
 import { Component } from '@angular/core';
 import { NewMessageComponent } from './components/new-message/new-message.component';
+import { MessageHistoryComponent } from './components/message-history/message-history.component';
 
 /**
  * Application shell.
@@ -11,7 +12,7 @@ import { NewMessageComponent } from './components/new-message/new-message.compon
 @Component({
   selector: 'app-root',
   standalone: true,
-  imports: [NewMessageComponent],
+  imports: [NewMessageComponent, MessageHistoryComponent],
   templateUrl: './app.component.html',
   styleUrl: './app.component.css',
 })

@@ -1,0 +1,24 @@
+<h2>Message History ({{ count$ | async }})</h2>
+
+@if (loading$ | async) {
+  <p class="state-message loading" role="status">Loading message history…</p>
+} @else if (error$ | async; as error) {
+  <p class="state-message error" role="alert">{{ error }}</p>
+} @else {
+  @if ((messages$ | async)?.length === 0) {
+    <p class="state-message empty">No messages sent yet.</p>
+  } @else {
+    <ul class="message-list">
+      @for (message of messages$ | async; track trackById($index, message)) {
+        <li class="message-card">
+          <div class="message-card-header">
+            <span class="message-number">{{ message.to_number }}</span>
+            <span class="message-timestamp">{{ message.created_at | utcTimestamp }}</span>
+          </div>
+          <div class="message-body">{{ message.body }}</div>
+          <div class="message-char-count">{{ message.body.length }}/{{ bodyMaxLength }}</div>
+        </li>
+      }
+    </ul>
+  }
+}
