@@ -1,0 +1,73 @@
+sequenceDiagram
+    autonumber
+    actor Nadav as Nadav (Director)
+    participant Arch as Architect (Opus)
+    participant TL as Tech Lead (Opus)
+    participant SM as Scrum Master / Team Lead
+    participant SrBE as Senior Backend Dev
+    participant JrBE as Junior Backend Dev
+    participant SrFE as Senior Frontend Dev
+    participant QA as QA / Chaos Engineer
+    participant Sec as Security Specialist
+    participant CR as Code Reviewer
+    participant Git as Git Repo
+
+    Nadav->>Arch: Kick off MySMS Messenger (spec + wireframe)
+    Arch->>Arch: Draft HLD (scope, IoC/DAL, SMS gateway seam)
+    Arch->>Git: commit doc/HLD.md
+    Arch->>TL: Handoff HLD
+
+    TL->>TL: Draft tech design + checkpoint plan (CP1-CP12)
+    TL->>Git: commit doc/tech-design.md
+    TL->>SM: Handoff checkpoint backlog
+
+    SM->>SrBE: Assign CP1, CP2, CP3, CP5 (Rails skeleton, DAL, IoC, identity)
+    SM->>SrFE: Assign CP8, CP9, CP10 (Angular skeleton, NewMessage, History)
+    par Backend foundation
+        SrBE->>Git: commit CP1
+        SrBE->>Git: commit CP2
+        SrBE->>Git: commit CP3
+        SrBE->>Git: commit CP5
+    and Frontend foundation
+        SrFE->>Git: commit CP8
+        SrFE->>Git: commit CP9
+        SrFE->>Git: commit CP10
+    end
+    SrBE-->>SM: Foundation done (flags Container naming fix)
+    SrFE-->>SM: Foundation done (flags Chrome-less test env)
+
+    SM->>JrBE: Assign CP4, CP6, CP7, CP12 (gateway, endpoints, CORS/docker)
+    SM->>QA: Review completed checkpoints (round 1)
+    SM->>Sec: Security review (round 1)
+    par Story handoff to QA/Security while dev continues
+        JrBE->>Git: commit CP4, CP6, CP7, CP12
+        QA->>Git: commit doc/qa-report-round1.md (1 Blocker, 5 Major)
+        Sec->>Git: commit doc/security-review-round1.md (1 High, 5 Medium)
+    end
+    QA-->>SM: Findings report
+    Sec-->>SM: Findings report
+
+    SM->>SrBE: Fix backend findings + implement CP11 (Twilio, unverified)
+    SM->>SrFE: Fix frontend findings (URL bug, codepoint counter, race)
+    par Fix round
+        SrBE->>Git: commit fixes + CP11
+        SrFE->>Git: commit fixes
+    end
+
+    SM->>QA: Re-verify fixes (round 2)
+    QA->>Git: commit doc/qa-report-round2.md (8/8 verified-fixed)
+    QA-->>SM: Ready for system-wide CR
+
+    loop Loop engineering (capped at $300)
+        SM->>CR: System-wide code review
+        CR->>Git: commit doc/code-review-iteration-N.md
+        CR-->>SM: Verdict (FINDINGS PRESENT or PASS)
+        alt Findings present
+            SM->>SrBE: Fix findings
+            SrBE->>Git: commit fixes
+        else PASS
+            SM->>Nadav: Loop closed - ready for review
+        end
+    end
+
+    SM->>Nadav: Delivery: HLD, tech design, working app, QA/security/CR reports, sequence diagram, infographic

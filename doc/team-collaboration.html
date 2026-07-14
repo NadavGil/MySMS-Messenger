@@ -1,0 +1,172 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>MySMS Messenger — Scrum Team Collaboration</title>
+<style>
+  :root{
+    --bg:#0f1220; --panel:#171b30; --panel2:#1d2240; --line:#2a2f52;
+    --ink:#eef0fb; --muted:#9aa0c3; --accent:#7c8cff; --accent2:#33d6a6;
+    --warn:#ffb454; --danger:#ff6b81; --opus:#c084fc;
+  }
+  *{box-sizing:border-box;}
+  body{margin:0;background:radial-gradient(1200px 800px at 10% -10%, #1b2040 0%, var(--bg) 60%);
+    color:var(--ink); font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Helvetica,Arial,sans-serif; padding:32px 24px 60px;}
+  .wrap{max-width:1180px;margin:0 auto;}
+  header{text-align:center;margin-bottom:36px;}
+  header h1{font-size:30px;margin:0 0 8px;letter-spacing:.3px;}
+  header p{color:var(--muted);margin:0;font-size:15px;}
+  .badge{display:inline-block;background:var(--panel2);border:1px solid var(--line);color:var(--accent2);
+    padding:3px 10px;border-radius:20px;font-size:12px;margin-top:12px;}
+
+  .roles{display:grid;grid-template-columns:repeat(auto-fit,minmax(190px,1fr));gap:14px;margin-bottom:40px;}
+  .role{background:var(--panel);border:1px solid var(--line);border-radius:14px;padding:16px;position:relative;overflow:hidden;}
+  .role:before{content:"";position:absolute;top:0;left:0;right:0;height:3px;background:var(--tag,var(--accent));}
+  .role h3{margin:0 0 4px;font-size:15px;}
+  .role .model{font-size:11px;color:var(--muted);text-transform:uppercase;letter-spacing:.05em;}
+  .role p{font-size:12.5px;color:var(--muted);margin:8px 0 0;line-height:1.4;}
+  .role.opus{--tag:var(--opus);}
+  .role.opus .model{color:var(--opus);}
+  .role.sonnet .model{color:var(--accent2);}
+
+  h2.section{font-size:18px;margin:0 0 18px;color:var(--ink);display:flex;align-items:center;gap:10px;}
+  h2.section:before{content:"";width:6px;height:6px;border-radius:50%;background:var(--accent);}
+
+  .timeline{position:relative;margin:0 0 48px;padding-left:26px;}
+  .timeline:before{content:"";position:absolute;left:9px;top:6px;bottom:6px;width:2px;background:linear-gradient(var(--line),var(--line));}
+  .step{position:relative;margin-bottom:18px;background:var(--panel);border:1px solid var(--line);border-radius:12px;padding:14px 16px;}
+  .step:before{content:"";position:absolute;left:-23px;top:18px;width:12px;height:12px;border-radius:50%;
+    background:var(--dot,var(--accent));box-shadow:0 0 0 4px rgba(124,140,255,.15);}
+  .step .row{display:flex;justify-content:space-between;align-items:baseline;flex-wrap:wrap;gap:6px;}
+  .step .who{font-weight:600;font-size:14px;}
+  .step .tag{font-size:10.5px;background:var(--panel2);border:1px solid var(--line);color:var(--muted);
+    padding:2px 8px;border-radius:20px;}
+  .step p{margin:8px 0 0;color:var(--muted);font-size:13px;line-height:1.45;}
+  .step.parallel{border-left:3px solid var(--accent2);}
+  .step.parallel:before{--dot:var(--accent2);}
+  .step.fix{border-left:3px solid var(--warn);}
+  .step.fix:before{--dot:var(--warn);}
+  .step.gate{border-left:3px solid var(--danger);}
+  .step.gate:before{--dot:var(--danger);}
+  .step.pass{border-left:3px solid var(--accent2);}
+
+  .par-group{border:1px dashed var(--line);border-radius:14px;padding:10px 10px 2px;margin:0 0 18px;position:relative;}
+  .par-group .par-label{position:absolute;top:-11px;left:14px;background:var(--bg);padding:0 8px;font-size:11px;
+    color:var(--accent2);letter-spacing:.05em;text-transform:uppercase;}
+  .par-group .step{margin-bottom:10px;}
+
+  .metrics{display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:14px;margin:8px 0 48px;}
+  .metric{background:var(--panel);border:1px solid var(--line);border-radius:14px;padding:16px;text-align:center;}
+  .metric .num{font-size:26px;font-weight:700;color:var(--accent2);}
+  .metric .lbl{font-size:11.5px;color:var(--muted);margin-top:4px;}
+
+  .findings{display:grid;grid-template-columns:repeat(auto-fit,minmax(220px,1fr));gap:14px;margin-bottom:48px;}
+  .fcard{background:var(--panel);border:1px solid var(--line);border-radius:14px;padding:16px;}
+  .fcard h4{margin:0 0 10px;font-size:14px;}
+  .sev{display:flex;justify-content:space-between;font-size:12.5px;padding:4px 0;color:var(--muted);border-top:1px solid var(--line);}
+  .sev:first-of-type{border-top:none;}
+  .sev b{color:var(--ink);}
+
+  footer{text-align:center;color:var(--muted);font-size:12px;margin-top:20px;}
+  footer a{color:var(--accent);}
+</style>
+</head>
+<body>
+<div class="wrap">
+
+  <header>
+    <h1>MySMS Messenger — Scrum Team Collaboration</h1>
+    <p>How an Architect, Tech Lead, Scrum Master, three developers, QA/Chaos, and Security worked the backlog end-to-end</p>
+    <span class="badge">Repo: github.com/NadavGil/MySMS-Messenger</span>
+  </header>
+
+  <h2 class="section">The Team</h2>
+  <div class="roles">
+    <div class="role opus"><h3>Architect</h3><div class="model">Claude Opus</div><p>Wrote the HLD: system context, IoC/DAL &amp; SMS-gateway seams, non-goals for the deferred bonuses.</p></div>
+    <div class="role opus"><h3>Tech Lead</h3><div class="model">Claude Opus</div><p>Turned the HLD into a concrete tech design: class names, API contract, and the CP1–CP12 checkpoint plan.</p></div>
+    <div class="role sonnet"><h3>Scrum Master</h3><div class="model">Workflow · Claude Sonnet</div><p>Assigned checkpoints by complexity, fanned out parallel work, routed findings back to devs.</p></div>
+    <div class="role sonnet"><h3>Senior Backend Dev</h3><div class="model">Claude Sonnet</div><p>Rails skeleton, Mongo DAL, IoC container, session identity, Twilio gateway, security &amp; CR fixes.</p></div>
+    <div class="role sonnet"><h3>Junior Backend Dev</h3><div class="model">Claude Sonnet</div><p>SMS gateway abstraction, send/list endpoints, CORS + docker-compose + README.</p></div>
+    <div class="role sonnet"><h3>Senior Frontend Dev</h3><div class="model">Claude Sonnet</div><p>Angular shell, NewMessage &amp; MessageHistory components, API service, bug fixes.</p></div>
+    <div class="role sonnet"><h3>QA / Chaos Engineer</h3><div class="model">Claude Sonnet</div><p>Reviewed every story, tried to break it with adversarial input, verified every fix landed for real.</p></div>
+    <div class="role sonnet"><h3>Security Specialist</h3><div class="model">Claude Sonnet</div><p>Session/cookie hardening, secrets hygiene, rate limiting, CORS posture.</p></div>
+  </div>
+
+  <h2 class="section">How the Work Flowed</h2>
+  <div class="timeline">
+
+    <div class="step"><div class="row"><span class="who">Nadav → Architect</span><span class="tag">kickoff</span></div>
+      <p>Exercise spec + wireframe handed to the Architect to scope the system.</p></div>
+
+    <div class="step"><div class="row"><span class="who">Architect → Tech Lead</span><span class="tag">doc/HLD.md</span></div>
+      <p>HLD committed: core scope only, session-cookie identity, config-swappable DAL &amp; SMS gateway.</p></div>
+
+    <div class="step"><div class="row"><span class="who">Tech Lead → Scrum Master</span><span class="tag">doc/tech-design.md</span></div>
+      <p>Checkpoint backlog CP1–CP12 defined with acceptance criteria, dev assignment, and size (S/M/L).</p></div>
+
+    <div class="par-group">
+      <span class="par-label">Ran in parallel</span>
+      <div class="step parallel"><div class="row"><span class="who">Scrum Master → Senior Backend Dev</span><span class="tag">CP1 · CP2 · CP3 · CP5</span></div>
+        <p>Rails skeleton, Mongo DAL + repository interface, IoC container, session identity concern.</p></div>
+      <div class="step parallel"><div class="row"><span class="who">Scrum Master → Senior Frontend Dev</span><span class="tag">CP8 · CP9 · CP10</span></div>
+        <p>Angular shell, NewMessageComponent + API service, MessageHistoryComponent.</p></div>
+    </div>
+
+    <div class="par-group">
+      <span class="par-label">Ran in parallel</span>
+      <div class="step parallel"><div class="row"><span class="who">Scrum Master → Junior Backend Dev</span><span class="tag">CP4 · CP6 · CP7 · CP12</span></div>
+        <p>SMS gateway abstraction, POST/GET message endpoints, CORS + docker-compose + README.</p></div>
+      <div class="step parallel"><div class="row"><span class="who">Scrum Master → QA + Security</span><span class="tag">round 1 review</span></div>
+        <p>QA: 1 Blocker + 5 Major found (in-memory repo lost state, cookie SameSite gap, double-API-prefix). Security: 1 High + 5 Medium (no rate limiting, cookie cross-origin gap).</p></div>
+    </div>
+
+    <div class="step fix"><div class="row"><span class="who">Scrum Master → Senior Backend + Senior Frontend</span><span class="tag">fix round</span></div>
+      <p>Blocker fixed (singleton repo), rack-attack rate limiting added, cookie policy made env-aware, double-prefix URL bug fixed, codepoint-accurate char counter, request-cancellation race fixed. CP11 (Twilio, unverified pending client creds) landed alongside.</p></div>
+
+    <div class="step gate"><div class="row"><span class="who">QA</span><span class="tag">round 2 verification</span></div>
+      <p>All 8 round-1 findings independently re-checked against real code: 8/8 verified fixed. One new Major surfaced (Rack::Attack's in-memory cache won't share state across multiple processes — flagged as a pre-deployment follow-up).</p></div>
+
+    <div class="step gate"><div class="row"><span class="who">Code Reviewer</span><span class="tag">CR loop · iteration 1</span></div>
+      <p>System-wide review: 4 Major (unsafe param coercion, zero service/gateway/repo specs), 6 Minor, 4 Nitpick. Routed back to Senior Backend Dev.</p></div>
+
+    <div class="step fix"><div class="row"><span class="who">Senior Backend Dev</span><span class="tag">fix</span></div>
+      <p>Type-guarded to_number/body, added service/gateway/repository unit specs, pinned rack-cors, hardened .gitignore.</p></div>
+
+    <div class="step pass"><div class="row"><span class="who">Code Reviewer</span><span class="tag">CR loop · iteration 2 → PASS</span></div>
+      <p>All 4 Majors verified resolved. Fresh holistic pass found only 2 cosmetic Nitpicks. Loop closed — well under the $300 cap.</p></div>
+
+    <div class="step"><div class="row"><span class="who">Scrum Master → Nadav</span><span class="tag">delivery</span></div>
+      <p>HLD, tech design, working code, every QA/security/CR report, sequence diagram, and this infographic — all committed as small, reviewable checkpoints.</p></div>
+
+  </div>
+
+  <h2 class="section">By the Numbers</h2>
+  <div class="metrics">
+    <div class="metric"><div class="num">12</div><div class="lbl">checkpoints shipped</div></div>
+    <div class="metric"><div class="num">2</div><div class="lbl">CR loop iterations to PASS</div></div>
+    <div class="metric"><div class="num">8</div><div class="lbl">agent roles involved</div></div>
+    <div class="metric"><div class="num">~20+</div><div class="lbl">small git commits</div></div>
+    <div class="metric"><div class="num">≪ $300</div><div class="lbl">CR-loop budget used</div></div>
+  </div>
+
+  <h2 class="section">Findings, Start to Finish</h2>
+  <div class="findings">
+    <div class="fcard"><h4>QA / Chaos — Round 1</h4>
+      <div class="sev">Blocker <b>1</b></div><div class="sev">Major <b>5</b></div><div class="sev">Minor <b>5</b></div><div class="sev">Nitpick <b>5</b></div></div>
+    <div class="fcard"><h4>Security — Round 1</h4>
+      <div class="sev">Critical <b>0</b></div><div class="sev">High <b>1</b></div><div class="sev">Medium <b>5</b></div><div class="sev">Low <b>3</b></div></div>
+    <div class="fcard"><h4>QA — Round 2 (verification)</h4>
+      <div class="sev">Verified fixed <b>8 / 8</b></div><div class="sev">New Major surfaced <b>1</b></div><div class="sev">New Minor <b>1</b></div></div>
+    <div class="fcard"><h4>Code Review — Iteration 1</h4>
+      <div class="sev">Major <b>4</b></div><div class="sev">Minor <b>6</b></div><div class="sev">Nitpick <b>4</b></div></div>
+    <div class="fcard"><h4>Code Review — Iteration 2</h4>
+      <div class="sev">Verdict <b>PASS</b></div><div class="sev">Remaining <b>2 Nitpicks</b></div></div>
+  </div>
+
+  <footer>
+    Full detail lives in <code>/doc</code>: HLD.md · tech-design.md · qa-report-round1/2.md · security-review-round1.md ·
+    code-review-iteration-1/2.md · agent-sequence-diagram.mermaid
+  </footer>
+</div>
+</body>
+</html>
