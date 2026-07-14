@@ -13,7 +13,8 @@ Rails.application.configure do
 
   config.log_level = :warn
 
-  # Test defaults (tech-design.md §2.6 / §7): fast, no external deps.
-  config.x.message_repository_class = "Repositories::InMemoryMessageRepository"
-  config.x.sms_gateway_class = "Gateways::FakeSmsGateway"
+  # NOTE: repository/gateway wiring is NOT set here. It is resolved once,
+  # for every environment, by config/initializers/container.rb (CP3) so
+  # there is a single source of truth for the IoC defaults
+  # (test defaults to in_memory/fake — see tech-design.md §2.6).
 end
