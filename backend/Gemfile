@@ -15,7 +15,10 @@ gem "mongoid", "~> 9.0"
 gem "twilio-ruby", "~> 7.0"
 
 # CORS for the Angular dev server (config/initializers/cors.rb, CP12).
-gem "rack-cors"
+# Pinned (security-review-round1.md I3 / code-review-iteration-1.md NIT3):
+# CORS is a security-relevant boundary, so don't let a floating version
+# silently pick up breaking/behavior changes.
+gem "rack-cors", "~> 2.0"
 
 # Rate limiting/throttling (security-review-round1.md H1,
 # config/initializers/rack_attack.rb). Protects POST /api/v1/messages from

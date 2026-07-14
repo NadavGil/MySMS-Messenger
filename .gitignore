@@ -5,6 +5,19 @@ backend/.bundle/
 backend/vendor/bundle/
 *.gem
 
+# Rails credentials (security-review-round1.md M4 / code-review-iteration-1.md MIN1):
+# these are never committed intentionally, but a future `rails
+# credentials:edit` will generate master.key locally - make sure git ignores
+# it before it's ever staged.
+backend/config/master.key
+backend/config/credentials/*.key
+# credentials.yml.enc is normally safe to commit (it's encrypted, useless
+# without master.key), but this project doesn't currently rely on Rails
+# credentials for secrets (see .env.example) - excluded defensively so it
+# never accidentally becomes the secrets channel without a deliberate
+# decision to do so.
+backend/config/credentials.yml.enc
+
 # Node / Angular
 frontend/node_modules/
 frontend/dist/
