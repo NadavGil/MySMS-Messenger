@@ -23,6 +23,15 @@ class Rack::Attack
       # bounded rather than exempt.
       owner_id_from_signed_cookie(req) || req.ip
     end
+
+    # Brute-force protection for POST /api/v1/auth/login (tech-design.md
+    # §13.6). Keyed by IP (MY CALL, per tech design): the JSON body isn't
+    # parsed at middleware time, so keying by IP + attempted username would
+    # require req.body.read + rewind, which is fragile with the JSON parser
+    # downstream. IP-only is the pragmatic, correct-by-default choice.
+    throttle("auth/login/ip", limit: 5, period: 60) do |req|
+      req.ip if req.post? && req.path == "/api/v1/auth/login"
+    end
   end
 
   def self.owner_id_from_signed_cookie(req)
