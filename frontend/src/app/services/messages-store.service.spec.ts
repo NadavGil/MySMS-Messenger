@@ -1,12 +1,15 @@
 import { HttpClientTestingModule, HttpTestingController } from '@angular/common/http/testing';
 import { TestBed } from '@angular/core/testing';
+import { vi } from 'vitest';
 import { environment } from '../../environments/environment';
 import { Message } from '../models/message.model';
+import { AuthStoreService } from './auth-store.service';
 import { MessagesStoreService } from './messages-store.service';
 
 describe('MessagesStoreService', () => {
   let service: MessagesStoreService;
   let httpMock: HttpTestingController;
+  let authStore: AuthStoreService;
   const baseUrl = `${environment.apiBaseUrl}/api/v1/messages`;
 
   const newerMessage: Message = {
@@ -25,6 +28,7 @@ describe('MessagesStoreService', () => {
     });
     service = TestBed.inject(MessagesStoreService);
     httpMock = TestBed.inject(HttpTestingController);
+    authStore = TestBed.inject(AuthStoreService);
   });
 
   afterEach(() => {
@@ -52,6 +56,20 @@ describe('MessagesStoreService', () => {
 
     expect(state.error).toBe('Failed to load message history. Please try again.');
     expect(state.loading).toBe(false);
+  });
+
+  it('clears the auth session on a 401 (CP18) via MessagesApiService.handleAuthExpiry, in addition to publishing the generic error', () => {
+    const clearSessionSpy = vi.spyOn(authStore, 'clearSession');
+
+    service.refresh();
+    const req = httpMock.expectOne(baseUrl);
+    req.flush({ errors: { base: ['Not authenticated'] } }, { status: 401, statusText: 'Unauthorized' });
+
+    expect(clearSessionSpy).toHaveBeenCalledTimes(1);
+
+    const state: { error: string | null } = { error: null };
+    service.error$.subscribe((e) => (state.error = e));
+    expect(state.error).toBe('Failed to load message history. Please try again.');
   });
 
   it('does not let a stale, slower refresh() response overwrite a newer one (QA report round1 M4)', () => {

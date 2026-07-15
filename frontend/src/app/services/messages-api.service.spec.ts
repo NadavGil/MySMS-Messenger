@@ -1,23 +1,27 @@
 import { HttpClientTestingModule, HttpTestingController } from '@angular/common/http/testing';
 import { TestBed } from '@angular/core/testing';
+import { vi } from 'vitest';
 import { environment } from '../../environments/environment';
 import { environment as prodEnvironment } from '../../environments/environment.production';
 import { environment as devEnvironment } from '../../environments/environment.development';
 import { ListMessagesResponse, Message } from '../models/message.model';
+import { AuthStoreService } from './auth-store.service';
 import { MessagesApiService } from './messages-api.service';
 
 describe('MessagesApiService', () => {
   let service: MessagesApiService;
   let httpMock: HttpTestingController;
+  let authStore: AuthStoreService;
   const baseUrl = `${environment.apiBaseUrl}/api/v1/messages`;
 
   beforeEach(() => {
     TestBed.configureTestingModule({
       imports: [HttpClientTestingModule],
-      providers: [MessagesApiService],
+      providers: [MessagesApiService, AuthStoreService],
     });
     service = TestBed.inject(MessagesApiService);
     httpMock = TestBed.inject(HttpTestingController);
+    authStore = TestBed.inject(AuthStoreService);
   });
 
   afterEach(() => {
@@ -78,6 +82,60 @@ describe('MessagesApiService', () => {
     expect(req.request.method).toBe('GET');
     expect(req.request.withCredentials).toBe(true);
     req.flush(mockResponse);
+  });
+
+  describe('401 handling (CP18, tech-design.md §13.7/§13.8)', () => {
+    it('sendMessage() clears the auth session on a 401 and still rethrows the error', () => {
+      const clearSessionSpy = vi.spyOn(authStore, 'clearSession');
+      let capturedError: unknown;
+
+      service.sendMessage({ to_number: '+14155550123', body: 'hi' }).subscribe({
+        error: (err) => (capturedError = err),
+      });
+
+      const req = httpMock.expectOne(baseUrl);
+      req.flush(
+        { errors: { base: ['Not authenticated'] } },
+        { status: 401, statusText: 'Unauthorized' },
+      );
+
+      expect(clearSessionSpy).toHaveBeenCalledTimes(1);
+      expect((capturedError as { status: number }).status).toBe(401);
+    });
+
+    it('listMessages() clears the auth session on a 401 and still rethrows the error', () => {
+      const clearSessionSpy = vi.spyOn(authStore, 'clearSession');
+      let capturedError: unknown;
+
+      service.listMessages().subscribe({
+        error: (err) => (capturedError = err),
+      });
+
+      const req = httpMock.expectOne(baseUrl);
+      req.flush(
+        { errors: { base: ['Not authenticated'] } },
+        { status: 401, statusText: 'Unauthorized' },
+      );
+
+      expect(clearSessionSpy).toHaveBeenCalledTimes(1);
+      expect((capturedError as { status: number }).status).toBe(401);
+    });
+
+    it('does NOT clear the auth session on a non-401 error (e.g. 422 validation)', () => {
+      const clearSessionSpy = vi.spyOn(authStore, 'clearSession');
+
+      service.sendMessage({ to_number: '+14155550123', body: 'hi' }).subscribe({
+        error: () => {},
+      });
+
+      const req = httpMock.expectOne(baseUrl);
+      req.flush(
+        { errors: { body: ['must be 250 characters or fewer'] } },
+        { status: 422, statusText: 'Unprocessable Entity' },
+      );
+
+      expect(clearSessionSpy).not.toHaveBeenCalled();
+    });
   });
 
   describe('environment apiBaseUrl convention (regression test for QA report round1 M2)', () => {
