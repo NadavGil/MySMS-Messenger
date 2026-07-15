@@ -152,22 +152,30 @@ accounts/credentials:
 1. **MongoDB Atlas**: create a free-tier (M0) cluster, a database user, and
    (for simplicity in this demo) allow network access from `0.0.0.0/0`. Copy
    the `mongodb+srv://...` connection string.
-2. **Render**: sign up (no credit card required for the free instance
-   types), connect your GitHub repo, then **New → Blueprint** and point it
-   at this repo — Render reads `render.yaml` and provisions both services
-   (`mysms-messenger-api` web service, `mysms-messenger-web` static site).
-   Pick real service names if you want different ones than the placeholders
-   (update them everywhere they appear — including
+2. **Render**: sign up. Two ways to provision the services:
+   - **Blueprint** (`New → Blueprint`, point at this repo — Render reads
+     `render.yaml` and provisions both services). **Known gotcha:** the
+     Blueprint flow prompts *"Your Blueprint services require payment
+     information on file"* even though every service here uses the free
+     instance type — this is a Blueprint-specific requirement, not a
+     property of the free tier itself.
+   - **Manual** (`New → Web Service` for the backend, `New → Static Site`
+     for the frontend) — does **not** require a card for free instances.
+     Use `render.yaml`'s contents as the reference for what to enter; exact
+     field-by-field values are in `doc/tech-design.md` §14.10.
+   Either way, pick real service names if you want different ones than the
+   placeholders (update them everywhere they appear — including
    `frontend/src/environments/environment.production.ts`'s `apiBaseUrl` and
-   `render.yaml`'s `CORS_ORIGINS`, which must match exactly or CORS/login
+   the backend's `CORS_ORIGINS`, which must match exactly or CORS/login
    will fail).
 3. Set backend secrets in the Render dashboard (API service → *Environment*):
    - `SECRET_KEY_BASE` — generate with `bin/rails secret`
    - `MONGO_URI` — your Atlas connection string
-   (These are declared as `sync: false` in `render.yaml`, so Render prompts
-   for them on first deploy rather than reading them from the repo.)
-4. Deploy the Blueprint (API service first, so its hostname exists before the
-   static site's build bakes in `apiBaseUrl` — see tech-design.md §14.5).
+   (Declared as `sync: false` in `render.yaml` for the Blueprint path; entered
+   directly as env vars if creating the service manually.)
+4. Deploy the API service first, so its hostname exists before the static
+   site's build bakes in `apiBaseUrl` (see tech-design.md §14.5), then deploy
+   the frontend.
 5. Smoke test signup → login → send → list live, in that order — a green
    `/health` check alone does **not** prove Mongo connectivity or CORS
    correctness (both fail lazily/client-side, not at boot).

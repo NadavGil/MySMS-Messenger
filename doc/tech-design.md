@@ -1218,3 +1218,49 @@ precede CP21's frontend build.
    very likely acceptable for a take-home demo — cheaper and simpler than
    Fly's paid always-on option — but flagging it explicitly as a trade-off.
 5. **Render account / Atlas URI** — needed to execute CP22 (see BLOCKED note).
+6. **Blueprint vs. manual service creation** — Render's dashboard "New →
+   Blueprint" flow prompted "Your Blueprint services require payment
+   information on file" on the first real attempt, even though every
+   service in `render.yaml` uses the free instance type. This is a
+   Blueprint-flow-specific requirement, not a property of the free instance
+   types themselves — the single-service "New → Web Service" / "New →
+   Static Site" flows do not require a card for free instances (per
+   `render.com/docs/free`). If a card isn't wanted, use manual creation
+   (§14.10) instead of the Blueprint; confirm with the director which is
+   preferred.
+
+### 14.10 Manual service creation (no card, skips the Blueprint UI)
+
+Use this instead of "New → Blueprint" if you don't want to add a payment
+method. `render.yaml` still documents the target config; these are the
+same values entered by hand.
+
+**Backend — New → Web Service:**
+
+| Field | Value |
+|---|---|
+| Repository | this repo |
+| Root Directory | `backend` |
+| Language | **Docker** |
+| Dockerfile Path | `./Dockerfile` (default, since Root Directory is already `backend`) |
+| Instance Type | **Free** |
+| Region | pick one close to your Atlas cluster (e.g. Oregon ↔ Atlas us-west) |
+| Health Check Path | `/health` |
+| Environment Variables | `RAILS_ENV=production`, `MESSAGE_REPOSITORY=mongo`, `SMS_PROVIDER=fake`, `CROSS_ORIGIN_COOKIES=true`, `RAILS_LOG_TO_STDOUT=true`, `CORS_ORIGINS=<the static site's real onrender.com URL, set after step 2>`, `SECRET_KEY_BASE=<output of bin/rails secret>`, `MONGO_URI=<your Atlas mongodb+srv://... string>` |
+
+**Frontend — New → Static Site:**
+
+| Field | Value |
+|---|---|
+| Repository | this repo |
+| Root Directory | `frontend` |
+| Build Command | `npm ci && npm run build` |
+| Publish Directory | `dist/frontend/browser` |
+| Redirects/Rewrites (Settings tab, after creation) | Source `/*` → Destination `/index.html`, Action **Rewrite** |
+
+**Ordering still matters (§14.5):** create the backend service first, note
+its real `onrender.com` hostname, put that into the backend's
+`CORS_ORIGINS` env var, and put the backend's hostname into
+`environment.production.ts`'s `apiBaseUrl` **before** creating/building the
+frontend static site (the URL is baked in at build time, not read at
+runtime).

@@ -1,14 +1,27 @@
 # Render Blueprint (Infrastructure as Code) — replaces the earlier Fly.io
 # fly.toml configs (tech-design.md §14). See doc/tech-design.md §14 for the
 # full rationale on why Render was chosen: genuinely free web service +
-# static site instances, no credit card required to create them (unlike
-# Fly.io, which requires a card on file for every org as of mid-2026).
+# static site instances, no credit card required to create them individually
+# (unlike Fly.io, which requires a card on file for every org as of
+# mid-2026).
 #
-# Deploy via the Render Dashboard: "New" -> "Blueprint" -> point at this repo
-# -> Render reads this file and provisions both services below. MongoDB
-# itself is NOT provisioned here (Render doesn't offer managed MongoDB) —
-# continue to use MongoDB Atlas's free M0 tier as an external datastore,
-# unchanged from the original plan (see §14.7 runbook).
+# KNOWN BLUEPRINT-SPECIFIC GOTCHA (found during the first real deploy
+# attempt): the Render dashboard's "New -> Blueprint" flow prompts "Your
+# Blueprint services require payment information on file" even when every
+# service here uses the free instance type — this is a Blueprint-flow
+# requirement, separate from the single-service "New -> Web Service" /
+# "New -> Static Site" flow (which does NOT require a card for free
+# instances per render.com/docs/free). If you don't want to add a card,
+# skip the Blueprint UI and create each service manually instead — this
+# file still fully documents the intended config to replicate by hand.
+# See doc/tech-design.md §14.10 for the exact manual field values.
+#
+# If deploying via the Blueprint UI anyway (e.g. a card is already on
+# file): "New" -> "Blueprint" -> point at this repo -> Render reads this
+# file and provisions both services below. MongoDB itself is NOT
+# provisioned here (Render doesn't offer managed MongoDB) — continue to
+# use MongoDB Atlas's free M0 tier as an external datastore, unchanged from
+# the original plan (see §14.7 runbook).
 #
 # PLACEHOLDER service names below (mysms-messenger-api / mysms-messenger-web)
 # — Render assigns the real *.onrender.com hostname from whatever `name` you
