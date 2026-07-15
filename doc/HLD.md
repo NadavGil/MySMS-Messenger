@@ -12,19 +12,22 @@
 
 ## 1. Overview & Goals
 
-MySMS Messenger is a full-stack web application that lets a user send SMS
-messages and review the history of messages they have previously sent from the
-same browser session. The application is composed of an **Angular** single-page
-app (SPA), a **Ruby on Rails** JSON API, a **MongoDB** datastore, and an
-outbound integration with **Twilio** for SMS delivery.
+MySMS Messenger is a full-stack web application that lets an **authenticated
+user** send SMS messages and review the history of messages they have
+previously sent. Users sign up and log in with a username + password; their
+message history follows their account rather than a browser session. The
+application is composed of an **Angular** single-page app (SPA), a **Ruby on
+Rails** JSON API, a **MongoDB** datastore, and an outbound integration with
+**Twilio** for SMS delivery.
 
 ### Primary goals
 
-1. **Send** an SMS message through the backend API to an arbitrary phone number.
-2. **Persist** every sent message in the database.
-3. **List** previously sent messages via a dedicated listing API endpoint.
-4. **Scope** the listing so a user sees only the messages associated with their
-   own browser session (session-cookie based; no login in this pass).
+1. **Authenticate** users via username + password: sign up, log in, log out.
+2. **Send** an SMS message through the backend API to an arbitrary phone number.
+3. **Persist** every sent message in the database.
+4. **List** previously sent messages via a dedicated listing API endpoint.
+5. **Scope** the listing so a user sees only the messages associated with their
+   own authenticated account.
 
 ### Architectural goals (the "how")
 
@@ -37,8 +40,10 @@ outbound integration with **Twilio** for SMS delivery.
 - **Testability as a first-class concern.** Both the SMS gateway and the DAL are
   dependency-injected/interface-based so unit tests substitute fakes without
   touching network or database.
-- **Clean extension path.** The deferred bonus features (auth, cloud deploy,
-  delivery-status webhooks) can be added later without reworking the core.
+- **Clean extension path.** The remaining deferred bonus features (cloud deploy,
+  delivery-status webhooks) can be added later without reworking the core. The
+  identity abstraction built in the previous pass is being cashed in now to add
+  real authentication (Bonus 1) with no change to Message storage or scoping.
 
 ---
 
@@ -46,13 +51,17 @@ outbound integration with **Twilio** for SMS delivery.
 
 ### In scope (this pass)
 
+- **Real user authentication** (Bonus 1): sign up, log in, and log out with a
+  username + password. Identity is a persisted `User`, not an anonymous session.
 - Single-page UI matching the wireframe: "MY SMS MESSENGER" with a **New
   Message** panel (phone input, 250-char message box + live counter, Clear,
   Submit) and a **Message History (N)** panel (scrollable list; each item shows
-  destination number, timestamp, bordered message body, and char count).
+  destination number, timestamp, bordered message body, and char count), plus
+  login/signup/logout affordances.
 - `POST` send endpoint and `GET` listing endpoint on the Rails API.
+- Signup, login, and logout endpoints on the Rails API.
 - Message persistence in MongoDB.
-- Session-cookie–based ownership/scoping of the message list.
+- Per-**user** ownership/scoping of the message list.
 - Outbound SMS via a swappable gateway abstraction (stub now, Twilio later).
 - Local MongoDB via `docker-compose`.
 
@@ -60,12 +69,12 @@ outbound integration with **Twilio** for SMS delivery.
 
 | # | Bonus feature | Deferred? | Design accommodates it via… |
 |---|---|---|---|
-| **Bonus 1** | User authentication / login | Yes | The **Identity abstraction** (§4.5): a `CurrentIdentity` concept that today resolves to a session cookie and later resolves to a `User`. |
 | **Bonus 2** | Live cloud deployment | Yes | **12-factor / config-driven** design (§7): all endpoints, secrets, and DB URIs come from env vars; containerized components. |
 | **Bonus 3** | Twilio delivery-status webhooks | Yes | The **`status` field placeholder** on the Message entity (§5) + the SMS Gateway seam (§4.4) that can later carry a callback URL and an inbound webhook controller. |
 
-These are called out so the Tech Lead builds seams — not implementations — for
-them now.
+(**Bonus 1 — user authentication — is no longer deferred; it is in scope this
+pass**, see §1/§2 above and §4.5.) These remaining bonuses are called out so the
+Tech Lead builds seams — not implementations — for them now.
 
 ---
 
@@ -73,7 +82,7 @@ them now.
 
 ```
                  (1) HTTPS / JSON over fetch
-  ┌──────────┐   + session cookie          ┌───────────────────────┐
+  ┌──────────┐   + auth session cookie      ┌───────────────────────┐
   │ Browser  │ ───────────────────────────▶│  Angular SPA (static) │
   │ (user)   │◀─────────────────────────── │  served as assets     │
   └──────────┘                             └───────────┬───────────┘
@@ -96,10 +105,12 @@ them now.
 
 **Flows**
 
-1. **Browser ⇄ Angular SPA** — the user interacts with the page; the SPA holds
-   the session cookie (set by the API) and sends it on every request.
-2. **Angular SPA ⇄ Rails API** — JSON requests: `POST` to send, `GET` to list.
-   Requests carry the session cookie so the API can scope results.
+1. **Browser ⇄ Angular SPA** — the user interacts with the page; after login the
+   SPA holds the auth session cookie (set by the API) and sends it on every
+   request.
+2. **Angular SPA ⇄ Rails API** — JSON requests: auth (signup/login/logout),
+   `POST` to send, `GET` to list. Requests carry the auth cookie so the API can
+   authenticate and scope results.
 3. **Rails API ⇄ MongoDB** — all reads/writes go through the DAL abstraction,
    never Mongoid directly from controllers.
 4. **Rails API → Twilio** — outbound SMS via the SMS Gateway abstraction; the
@@ -111,7 +122,8 @@ them now.
 
 ### 4.1 Angular SPA (frontend)
 
-- Renders the single-page UI per the wireframe (two side-by-side panels).
+- Renders the single-page UI per the wireframe (two side-by-side panels) plus
+  login/signup views and a logout action.
 - **New Message panel:** phone-number field, message textarea bound to a live
   `N/250` counter, a **Clear** action that resets the form, and **Submit** that
   calls the send API.
@@ -121,20 +133,23 @@ them now.
   box, and a per-message `chars/250` count.
 - Talks to a single API base URL taken from Angular environment config
   (config-driven; no hard-coded host).
-- Sends requests with credentials enabled so the session cookie round-trips.
+- Sends requests with credentials enabled so the auth cookie round-trips.
+- Redirects unauthenticated users to login; handles `401` responses by returning
+  the user to the login view.
 - Client-side validation (non-empty number, ≤250 chars) is a UX convenience;
   the server remains the source of truth.
 
 ### 4.2 Rails API layer (controllers)
 
 - Exposes the JSON endpoints (§6), performs request validation, translates
-  domain results into HTTP responses/status codes, and manages the session
+  domain results into HTTP responses/status codes, and manages the auth session
   cookie.
-- **Thin controllers**: no persistence or Twilio logic inline. They delegate to
-  a service/use-case object that receives its collaborators (repository, gateway,
-  identity) via dependency injection.
-- Establishes/reads the session cookie and hands the resolved identity to the
-  service layer.
+- **Thin controllers**: no persistence, Twilio, or password logic inline. They
+  delegate to a service/use-case object that receives its collaborators
+  (repository, gateway, identity) via dependency injection.
+- Reads the auth cookie, resolves it to the current `User`, and hands the
+  resolved identity to the service layer. Rejects unauthenticated requests to
+  protected endpoints with `401`.
 
 ### 4.3 Data Access Layer (repository abstraction)
 
@@ -160,30 +175,59 @@ them now.
   swapping providers is a wiring change, never a code change. This is the IoC
   seam the Tech Lead will formalize.
 
-### 4.5 Session / Identity concept
+### 4.5 Authenticated identity concept
 
 - A `CurrentIdentity` abstraction answers one question: **"who owns this
-  request?"** In this pass it is derived from a signed session cookie (a stable
-  per-browser identifier issued on first contact).
-- The service layer stores this identifier on each Message and filters the
-  listing by it — this is what enforces requirement (4), per-session scoping.
-- **Extension seam:** the same abstraction can later resolve to an authenticated
-  `User` id (Bonus 1). Because the rest of the system depends on
-  `CurrentIdentity` — not on "the cookie" directly — adding login becomes a matter
-  of changing how identity is resolved, not how messages are stored or listed.
+  request?"** In this pass it resolves to an authenticated **`User`**: the API
+  reads a signed, HttpOnly cookie that carries the logged-in user's id and loads
+  the corresponding `User`.
+- The delivery mechanism to the browser is unchanged from the previous pass — a
+  signed, HttpOnly cookie — **only what it identifies changes**: a real `User`
+  id instead of a random, anonymous session UUID. No anonymous identity is ever
+  minted; a request without a valid authenticated identity is rejected (`401`).
+- The service layer stores this `User` id on each Message and filters the
+  listing by it — this is what enforces requirement (5), per-user scoping.
+- **Authentication mechanism (per exercise instruction — use a built-in/
+  well-known mechanism, never hand-rolled):** use Rails/ActiveModel's
+  **`has_secure_password`** (bcrypt-backed). It ships in Rails core (not a
+  third-party gem needing separate vetting) and is the natural fit for an
+  **API-only** app with no server-rendered forms. A full framework such as
+  Devise is more than this needs and is harder to bolt onto API-only + Mongoid
+  cleanly, so it is deliberately avoided.
+- Because the rest of the system depends on `CurrentIdentity` — not on "the
+  cookie" or "the session" directly — introducing the `User` was a change to
+  *how identity is resolved*, not to how messages are stored or listed, exactly
+  as the previous HLD promised.
 
 ---
 
 ## 5. Data Model Overview
 
-Single primary entity for this pass: **Message**.
+Two entities this pass: **User** and **Message**.
+
+### User
+
+| Field | Type | Purpose |
+|---|---|---|
+| `id` | ObjectId / string | Primary key; this is the value used as a Message's `owner_id`. |
+| `username` | string (unique) | Login identifier. |
+| `password_digest` | string | Bcrypt hash produced by `has_secure_password`. **Never stores plaintext.** |
+| `created_at` | timestamp (UTC) | Standard audit field. |
+| `updated_at` | timestamp (UTC) | Standard audit field. |
+
+Notes:
+- `username` is uniquely indexed.
+- No plaintext password is ever persisted, and the `password` virtual attribute
+  is never logged (see §7.3).
+
+### Message
 
 | Field | Type | Purpose |
 |---|---|---|
 | `id` | ObjectId / string | Primary key. |
 | `to_number` | string | Destination phone number. |
 | `body` | string (≤250 chars) | Message text. |
-| `owner_id` | string | The `CurrentIdentity` value (session id now; user id later). **The scoping key.** |
+| `owner_id` | string | The `CurrentIdentity` value — **now a real `User` id** (previously an anonymous session id). Same field, same type; **no schema migration needed**, exactly as this document previously promised. **The scoping key.** |
 | `status` | string (enum) | Delivery status **placeholder** — e.g. `queued`/`sent`; defaults to a simple "submitted" value now. Reserved for Bonus 3 webhook updates. |
 | `provider_message_id` | string, nullable | Reference returned by the gateway (Twilio SID later); enables future status correlation. |
 | `created_at` | timestamp (UTC) | When the message was created; drives the history timestamp display. |
@@ -191,6 +235,9 @@ Single primary entity for this pass: **Message**.
 
 Notes:
 - `owner_id` is indexed to make the scoped listing query efficient.
+- `owner_id` now references a `User` id; because it was already an opaque owner
+  identifier, pointing it at a real user is a semantic change only — no field or
+  index change.
 - `status` and `provider_message_id` exist now but are inert; they let webhooks
   (Bonus 3) update records later with **no schema migration**.
 
@@ -198,17 +245,21 @@ Notes:
 
 ## 6. API Surface (high level)
 
-Detailed request/response schemas are the Tech Lead's responsibility. At the
-architecture level there are two endpoints, both operating on the
-session-scoped identity:
+Detailed request/response schemas and concrete endpoint design are the Tech
+Lead's responsibility. At the architecture level there are two authentication
+endpoints and two message endpoints:
 
-| Method | Path (indicative) | Purpose | Scoping |
+| Method | Path (indicative) | Purpose | Auth / Scoping |
 |---|---|---|---|
-| `POST` | `/api/messages` | Send an SMS: validate input, invoke the SMS Gateway, persist the resulting Message. | Stamps the new record with the current identity. |
-| `GET` | `/api/messages` | List previously sent messages for the history panel (typically newest-first). | Returns **only** records whose `owner_id` matches the current identity. |
+| `POST` | `/api/signup` | Create a `User` (username + password); persist a bcrypt `password_digest`. | Public. |
+| `POST` | `/api/login` | Authenticate username + password; on success issue the signed, HttpOnly auth cookie. | Public; rate-limited (§7.3). |
+| `DELETE` | `/api/logout` (or `POST`) | End the session; clear the auth cookie. | Requires authentication. |
+| `POST` | `/api/messages` | Send an SMS: validate input, invoke the SMS Gateway, persist the resulting Message. | **Requires auth**; stamps the new record with the current user id. |
+| `GET` | `/api/messages` | List previously sent messages for the history panel (typically newest-first). | **Requires auth**; returns **only** records whose `owner_id` matches the current user. |
 
-- Both endpoints require the session cookie; the API issues one on first request
-  if absent.
+- The two message endpoints now **require authentication**: an unauthenticated
+  request receives `401` instead of the API silently minting an anonymous
+  identity.
 - Responses are JSON. Standard HTTP status codes convey success/validation/error.
 
 ---
@@ -224,31 +275,43 @@ session-scoped identity:
   easily unit-testable objects.
 - The Stub SMS gateway means the full send flow is testable today without Twilio
   credentials.
+- Authentication is testable through the same seams: the identity resolution is
+  a collaborator, and `has_secure_password` behavior is standard, well-covered
+  Rails core.
 
 ### 7.2 Config-driven environment (12-factor)
 
 - All environment-specific values — Mongo URI, SMS provider selection, Twilio
-  credentials, API base URL, allowed CORS origins — come from environment
-  variables, never hard-coded. This is what makes datastore/provider swaps and
-  future deployment config-only.
+  credentials, API base URL, allowed CORS origins, cookie/signing secret — come
+  from environment variables, never hard-coded. This is what makes
+  datastore/provider swaps and future deployment config-only.
 - Local MongoDB runs via `docker-compose`; the app reads the same `MONGO_URI`
   variable regardless of whether Mongo is local Docker or Atlas.
 
-### 7.3 Security posture (baseline for this pass)
+### 7.3 Security posture
 
-- Session cookie is **signed/HttpOnly** and, in deployed environments, `Secure`
-  + appropriate `SameSite`.
+- **Password hashing:** passwords are hashed with **bcrypt** via
+  `has_secure_password`; plaintext passwords are **never stored** and **never
+  logged** (filter the `password`/`password_confirmation` params from logs).
+- **Brute-force protection on login:** the login endpoint is rate-limited by
+  **extending the existing rack-attack approach** already used for the send-SMS
+  endpoint (e.g. throttle by IP and by username) to blunt credential-stuffing.
+- **Authentication required:** all existing message endpoints now require a
+  valid authenticated identity and return `401` when absent — no anonymous
+  identity is ever minted.
+- Auth session cookie is **signed/HttpOnly** and, in deployed environments,
+  `Secure` + appropriate `SameSite`.
 - **CORS** restricted to the known SPA origin(s) via config.
-- Server-side input validation (phone format, ≤250 chars) — client validation is
-  UX only.
-- Secrets (Twilio credentials) are never committed; supplied via env vars.
-- Scoping by `owner_id` prevents a session from reading another session's
-  messages.
-- *(Full auth/authorization is Bonus 1; see §8.)*
+- Server-side input validation (phone format, ≤250 chars, username/password
+  rules) — client validation is UX only.
+- Secrets (Twilio credentials, cookie signing key) are never committed; supplied
+  via env vars.
+- Scoping by `owner_id` (now a `User` id) prevents one user from reading
+  another user's messages.
 
 ### 7.4 Scalability
 
-- The Rails API is **stateless** apart from the session cookie, so it scales
+- The Rails API is **stateless** apart from the auth cookie, so it scales
   horizontally behind a load balancer.
 - `owner_id` is indexed for efficient scoped listing; listing can adopt
   pagination if history grows large.
@@ -259,17 +322,10 @@ session-scoped identity:
 
 ---
 
-## 8. Extension to Deferred Bonuses (without major rework)
+## 8. Extension to Remaining Deferred Bonuses (without major rework)
 
-### Bonus 1 — User authentication / login
-
-- Add a `User` model and an auth mechanism (e.g. token/session-backed login).
-- Re-point the `CurrentIdentity` abstraction to resolve to the authenticated
-  user id instead of the raw session id.
-- Because every message already carries `owner_id` and all scoping goes through
-  `CurrentIdentity`, **no change** is needed to the Message model, the repository,
-  or the listing logic. A migration can optionally associate existing
-  session-owned messages with users.
+> Bonus 1 (user authentication) is now implemented in this pass — see §4.5, §5,
+> §6, §7.3. The two bonuses below remain deferred.
 
 ### Bonus 2 — Live cloud deployment
 
@@ -277,7 +333,7 @@ session-scoped identity:
   Mongo container/Atlas).
 - Because everything is config-driven (§7.2), deploying means providing
   production env values (Mongo URI → Atlas, `SMS_PROVIDER=twilio` + credentials,
-  CORS origin, secure cookie flags) — not code changes.
+  CORS origin, secure cookie flags, cookie signing secret) — not code changes.
 - CI/CD can build the two images and deploy behind a load balancer.
 
 ### Bonus 3 — Twilio delivery-status webhooks
@@ -294,8 +350,8 @@ session-scoped identity:
 
 ### Assumptions
 
-- No login in this pass; identity = signed session cookie, one logical "user"
-  per browser session. Clearing cookies starts a fresh, empty history.
+- Identity = an authenticated `User` (username + password); message history
+  follows the account and is now available across devices/browsers after login.
 - Twilio credentials are unavailable now; the **Stub gateway is the default** and
   the app is fully demonstrable end-to-end without real SMS delivery.
 - 250-character limit applies to the message body and is enforced server-side.
@@ -305,21 +361,27 @@ session-scoped identity:
 
 ### Open questions (for client / Tech Lead)
 
+- Password policy: minimum length/complexity, and any username format rules?
+- Session lifetime / expiry: how long should a login remain valid; any
+  "remember me" behavior?
 - Should the `POST` persist a message even if the gateway send fails, or only on
   success? (Affects how `status` is initialized.)
 - Any phone-number format/validation rules or country constraints?
 - Expected history volume — is pagination needed in this pass or deferred?
 - Should the history list auto-refresh after a send, or is optimistic
   client-side append acceptable?
-- Rate-limiting expectations to guard against SMS-cost abuse (relevant once the
-  real Twilio adapter is live).
+- Rate-limiting thresholds for both login and the send-SMS endpoint.
 
 ### Risks
 
 - **Twilio integration untested** until credentials arrive — mitigated by the
   gateway seam, but the real adapter must be integration-tested before any live
   use (SMS incurs cost and has deliverability nuances).
-- **Cost/abuse exposure** once real sending is enabled — consider rate limiting
-  and, eventually, auth (Bonus 1) before production.
-- **Session-only identity** means no cross-device history and easy history loss
-  on cookie clear — acceptable for this pass, resolved by Bonus 1.
+- **Cost/abuse exposure** once real sending is enabled — mitigated by
+  authentication (now in scope) plus rate limiting on send.
+- **Pre-existing anonymous messages** created before this change carry an
+  `owner_id` that is a session UUID rather than a real `User` id, so they will
+  not be visible to any account. This is a **known one-time data consideration**;
+  because the app is **pre-launch** it is accepted as-is and **not** something to
+  resolve retroactively (any such records can simply be discarded when the store
+  is reset). No migration is planned.
