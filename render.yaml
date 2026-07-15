@@ -27,6 +27,18 @@
 # — Render assigns the real *.onrender.com hostname from whatever `name` you
 # set here. Update CORS_ORIGINS and frontend/src/environments/
 # environment.production.ts's apiBaseUrl to match your actual hostnames.
+#
+# Bug blitz (2026-07-15) drift note: this file was never actually applied via
+# the Blueprint flow — the real services were created manually (Blueprint's
+# payment-info prompt, see the gotcha above), and ended up named
+# `mysms-messenger-server` (API) / `mysms-messenger-ehtu` (static site), not
+# the `mysms-messenger-api` / `mysms-messenger-web` placeholders still below.
+# README.md, environment.production.ts, and doc/tech-design.md all already
+# reflect the real names; this file is left with the original placeholders
+# intentionally, as illustrative IaC documentation of the intended shape
+# rather than a config that's actually kept in sync with the live deploy —
+# if you ever DO apply this Blueprint for real, update the `name:` fields and
+# CORS_ORIGINS/apiBaseUrl together, per the existing instructions above.
 
 services:
   - type: web
@@ -54,6 +66,24 @@ services:
         sync: false               # set manually in the Render dashboard: `bin/rails secret`
       - key: MONGO_URI
         sync: false               # set manually: your Atlas mongodb+srv://... connection string
+      # Bug blitz (2026-07-15) finding: Bonus 3 (webhooks) added four more
+      # ENV vars that the live backend actually needs (.env.example already
+      # documents all four), but this Blueprint file was written before
+      # Bonus 3 existed and was never backfilled — a fresh Blueprint deploy
+      # from this file alone would boot with SMS_PROVIDER=fake (fine) but
+      # the Twilio status webhook permanently disabled (503), silently,
+      # since TWILIO_AUTH_TOKEN would be unset. Declared here as sync:false
+      # placeholders (matching SECRET_KEY_BASE/MONGO_URI's pattern) so the
+      # Blueprint at least prompts for them rather than omitting them
+      # entirely.
+      - key: TWILIO_ACCOUNT_SID
+        sync: false               # leave unset while SMS_PROVIDER=fake; set once real Twilio creds exist
+      - key: TWILIO_AUTH_TOKEN
+        sync: false               # required for BOTH outbound Twilio sends AND inbound webhook signature validation
+      - key: TWILIO_FROM_NUMBER
+        sync: false               # leave unset while SMS_PROVIDER=fake
+      - key: TWILIO_STATUS_CALLBACK_URL
+        sync: false               # set to this service's own public URL + /api/v1/webhooks/twilio/status once TWILIO_AUTH_TOKEN is set
       # Render injects PORT automatically; the Dockerfile already honors
       # ${PORT:-8080} (backend/Dockerfile), so no PORT var needed here.
 

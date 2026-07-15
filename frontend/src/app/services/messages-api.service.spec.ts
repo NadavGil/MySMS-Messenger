@@ -145,9 +145,23 @@ describe('MessagesApiService', () => {
     // a double `/api/api/v1/messages`, exactly as production previously did.
     const buildUrl = (apiBaseUrl: string) => `${apiBaseUrl}/api/v1/messages`;
 
+    // Bug blitz (2026-07-15) finding: this assertion still hardcoded the
+    // pre-Bonus-2 assumption that production is a same-origin deploy behind
+    // a reverse proxy (empty apiBaseUrl). Bonus 2 deliberately moved to a
+    // genuine two-service, cross-origin Render deploy
+    // (environment.production.ts now points at the API's own absolute
+    // https://...onrender.com origin — see that file's comments and
+    // tech-design.md §14.5), so this test had been failing/stale ever since
+    // without anyone noticing, since `ng test` wasn't re-run after that
+    // config change landed. Updated to assert the real convention — a
+    // non-empty absolute origin with no trailing slash and no embedded
+    // `/api` segment — while still guarding against the actual M2 regression
+    // (a double `/api/api/...`).
     it('does not double-prefix /api in the production environment', () => {
       const url = buildUrl(prodEnvironment.apiBaseUrl);
-      expect(url).toBe('/api/v1/messages');
+      expect(prodEnvironment.apiBaseUrl).toBe('https://mysms-messenger-server.onrender.com');
+      expect(prodEnvironment.apiBaseUrl.endsWith('/')).toBe(false);
+      expect(url).toBe('https://mysms-messenger-server.onrender.com/api/v1/messages');
       expect(url).not.toContain('/api/api');
     });
 

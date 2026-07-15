@@ -186,6 +186,17 @@ AUTH_TOKEN=<must match TWILIO_AUTH_TOKEN set on that backend> \
 set on the target backend — the webhook is disabled/503 otherwise, by
 design.)
 
+## Bug blitz (2026-07-15)
+
+A full cross-cutting bug-hunt pass (backend, frontend, deployment config,
+test suites) was run after all three bonus features went live. Two Medium
+backend issues (SMS content leaking into request logs; an unhandled 500 on
+a rare signup race) and one High frontend issue (stale message history
+visible across logins on a shared browser) were found and fixed, plus a
+stale/failing frontend regression test and a `render.yaml` drift issue
+(missing Bonus 3 env vars, stale placeholder service names). Full writeup:
+`doc/bug-blitz-2026-07-15.md`.
+
 ## Deploying (Bonus 2 — Render + MongoDB Atlas)
 
 Full design in `doc/tech-design.md` §14. **Switched from an earlier Fly.io

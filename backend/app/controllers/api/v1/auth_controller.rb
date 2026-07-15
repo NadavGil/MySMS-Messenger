@@ -18,6 +18,25 @@ module Api
         else
           render json: { errors: user.errors.messages }, status: :unprocessable_entity
         end
+      rescue Mongo::Error => e
+        # Bug blitz (2026-07-15) finding: User#username uniqueness is
+        # deliberately app-level-validated-but-DB-index-authoritative (see
+        # user.rb's "racy; index is authoritative" comment) — two concurrent
+        # signups for the same normalized username can BOTH pass the
+        # Mongoid uniqueness check and race to `save`, with the loser
+        # hitting the unique index at the driver level instead. Unlike
+        # MongoMessageRepository (which already wraps every Mongo call and
+        # re-raises as Repositories::RepositoryError, caught globally in
+        # ApplicationController), User is a plain Mongoid model with no
+        # repository wrapper, so this raw Mongo::Error was previously
+        # unhandled here — an unhandled 500 with a driver backtrace instead
+        # of the same structured 422 a normal "username taken" gets.
+        # Duplicate-key (E11000) is by far the only realistic case (the
+        # unique index is on username, and nothing else in this codepath can
+        # legitimately fail this way), so it's safe to answer with the same
+        # response a synchronous uniqueness-validation failure would give.
+        render json: { errors: { username: ["has already been taken"] } },
+               status: :unprocessable_entity
       end
 
       # POST /api/v1/auth/login

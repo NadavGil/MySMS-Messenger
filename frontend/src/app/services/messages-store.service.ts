@@ -62,4 +62,25 @@ export class MessagesStoreService {
   refresh(): void {
     this.refreshTrigger$.next();
   }
+
+  /**
+   * Bug blitz (2026-07-15) finding: this store is `providedIn: 'root'`, so
+   * it outlives any single user's session — nothing was resetting it on
+   * logout. On a shared/kiosk machine, User B logging in right after User A
+   * logs out would briefly see User A's stale message count in the
+   * `<h2>Message History (N)</h2>` header (that count is NOT gated behind
+   * the `loading$`/`error$` conditional in the template, unlike the message
+   * list itself) until the next `refresh()` call resolved and overwrote it.
+   * `AppComponent` now subscribes to `AuthStoreService.loggedIn$` and calls
+   * this whenever it goes `false` (covers both the explicit logout button
+   * and the automatic 401 `clearSession()` path) — done at the component
+   * level rather than inside `AuthStoreService` itself, to avoid a circular
+   * DI dependency (`AuthStoreService` → `MessagesStoreService` →
+   * `MessagesApiService` → `AuthStoreService`).
+   */
+  clear(): void {
+    this.messagesSubject.next([]);
+    this.errorSubject.next(null);
+    this.loadingSubject.next(false);
+  }
 }

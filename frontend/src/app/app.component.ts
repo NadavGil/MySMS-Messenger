@@ -7,6 +7,7 @@ import { LoginComponent } from './components/login/login.component';
 import { SignupComponent } from './components/signup/signup.component';
 import { AuthUser } from './models/auth.model';
 import { AuthStoreService } from './services/auth-store.service';
+import { MessagesStoreService } from './services/messages-store.service';
 
 /**
  * Application shell.
@@ -41,7 +42,10 @@ export class AppComponent implements OnInit {
   /** Which auth panel is showing when logged out. Login is the default. */
   showSignup = false;
 
-  constructor(private readonly authStore: AuthStoreService) {
+  constructor(
+    private readonly authStore: AuthStoreService,
+    private readonly messagesStore: MessagesStoreService,
+  ) {
     this.user$ = this.authStore.user$;
     this.loggedIn$ = this.authStore.loggedIn$;
     this.checked$ = this.authStore.checked$;
@@ -49,6 +53,25 @@ export class AppComponent implements OnInit {
 
   ngOnInit(): void {
     this.authStore.checkSession().subscribe();
+
+    // Bug blitz (2026-07-15) finding: MessagesStoreService is
+    // `providedIn: 'root'`, so it outlives any single user's session.
+    // Nothing was clearing it on logout, so on a shared/kiosk machine the
+    // NEXT user to log in would briefly see the PREVIOUS user's message
+    // count in the <h2>Message History (N)</h2> header (that count isn't
+    // gated behind loading$/error$ like the list itself) until their own
+    // refresh() resolved and overwrote it. Reacting to loggedIn$ here
+    // (rather than reaching into AuthStoreService) covers BOTH the
+    // explicit onLogout() button AND the automatic 401 clearSession() path
+    // (MessagesApiService.handleAuthExpiry) without creating a circular
+    // dependency between AuthStoreService and MessagesStoreService (which
+    // itself depends on MessagesApiService, which depends on
+    // AuthStoreService).
+    this.loggedIn$.subscribe((loggedIn) => {
+      if (!loggedIn) {
+        this.messagesStore.clear();
+      }
+    });
   }
 
   onLogout(): void {
