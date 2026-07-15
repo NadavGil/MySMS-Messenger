@@ -1,11 +1,24 @@
 # MySMS Messenger
 
-Full-stack app for sending SMS messages and reviewing your own send history.
-Stack: **Angular** SPA + **Ruby on Rails 7.1** JSON API (Mongoid/MongoDB) +
-an outbound **Twilio** integration behind a swappable gateway abstraction.
+Full-stack app for sending SMS messages and reviewing your own send history,
+with real user accounts (signup/login/logout — Bonus 1). Stack: **Angular**
+SPA + **Ruby on Rails 7.1** JSON API (Mongoid/MongoDB) + an outbound
+**Twilio** integration behind a swappable gateway abstraction.
 
 See `doc/HLD.md` (architecture) and `doc/tech-design.md` (concrete design,
-API contract, checkpoint plan) for full details.
+API contract, checkpoint plan — auth design is in tech-design.md §13) for
+full details.
+
+## Authentication (Bonus 1)
+
+Message history is scoped per authenticated user, not an anonymous session
+cookie. On first visit you'll see a Signup/Login screen; create an account
+(username + password) to reach the messenger UI. Auth uses Rails/ActiveModel's
+built-in `has_secure_password` (bcrypt) — no custom crypto, no third-party
+auth framework. The identity is still delivered via the same signed,
+HttpOnly cookie mechanism already used throughout this app; only what it
+identifies changed (a real `User` id instead of a random UUID). Logging out
+clears the cookie; message endpoints now return `401` if you're not signed in.
 
 ## Prerequisites
 
@@ -92,6 +105,10 @@ Summary:
 | `CROSS_ORIGIN_COOKIES` | `true` to switch the `msms_owner` identity cookie to `SameSite=None; Secure` for genuine cross-origin deployments (requires HTTPS) | `false` (`SameSite=Lax`) |
 | `SECRET_KEY_BASE` | Rails secret key base — required in production (no committed credentials file); generate with `bin/rails secret` | none in prod |
 | `RACK_ATTACK_DISABLED` | Emergency bypass for the send-endpoint rate limit | `false` |
+
+Login is throttled to 5 attempts/minute per IP and signup to 10/minute per
+IP (same `rack-attack` mechanism, `config/initializers/rack_attack.rb`) —
+brute-force and enumeration-abuse protection for the new auth endpoints.
 
 ## Twilio status (CP11)
 

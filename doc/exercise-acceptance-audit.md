@@ -6,9 +6,10 @@ Method: every verdict below is based on direct inspection of the current repo
 source (not prior summaries). File paths are relative to the repo root
 (`/MySMS-Messenger`) unless noted.
 
-Scope note (client-approved): this pass targets "core functionality only."
-Bonus 1 (auth), Bonus 2 (live deploy), Bonus 3 (webhooks) were explicitly
-deferred by the client. They are still audited below for completeness.
+Scope note (client-approved): the initial pass targeted "core functionality
+only," with Bonus 1 (auth), Bonus 2 (live deploy), Bonus 3 (webhooks) all
+deferred. Bonus 1 was subsequently brought into scope and implemented (see
+below); Bonus 2 and Bonus 3 remain deferred.
 
 ---
 
@@ -200,24 +201,44 @@ zero-gem Minitest suite for the core logic.
 
 ## Bonus 1 — Basic user authentication
 
-**Verdict: OUT OF SCOPE (client-approved), genuinely not implemented**
+**Verdict: IMPLEMENTED.** Built exactly along the extension seam this
+document previously described as "credible but not yet built" — that seam
+held up in practice with zero schema changes.
 
-- No `User` model anywhere in `backend/app/models/` (only
-  `message_document.rb` exists).
-- No auth gem in `backend/Gemfile` (no Devise, `has_secure_password`, JWT,
-  Sorcery, etc.).
-- `grep -rli "devise|has_secure_password|class User"` across `backend/app`
-  returned nothing relevant.
-- `doc/HLD.md` §8 ("Extension to Deferred Bonuses") explicitly documents how
-  this would extend cleanly: "Add a `User` model and an auth mechanism...
-  Re-point the `CurrentIdentity` abstraction to resolve to the authenticated
-  user id" — and the current `CurrentIdentity` concern's own comments
-  independently confirm it was built as "the seam Bonus 1 later re-points...
-  without touching Message storage/scoping." This is a real, load-bearing
-  seam (owner_id is already an opaque string in the repository/service
-  layer — swapping a cookie UUID for a User#id requires no schema change),
-  not just a doc claim with no code backing it.
-- Status: genuinely deferred, with a credible, inspected extension path.
+- `backend/app/models/user.rb`: real Mongoid `User` document, `username`
+  (unique index, lowercase-normalized) + `password_digest`, `has_secure_password`
+  (bcrypt, added to `Gemfile`) — the exercise's own instruction to use a
+  built-in/well-known mechanism rather than hand-rolled auth, satisfied via
+  Rails/ActiveModel core, not a third-party framework like Devise.
+- `backend/app/controllers/api/v1/auth_controller.rb`: `POST /api/v1/auth/signup`,
+  `POST /api/v1/auth/login`, `DELETE /api/v1/auth/logout`, `GET /api/v1/auth/me`.
+- `CurrentIdentity` reworked: no longer mints an anonymous UUID on first
+  contact; requires a real authenticated user or responds `401`. Same
+  signed/HttpOnly cookie mechanism, same SameSite/Secure/cross-origin
+  policy — only what it identifies changed, exactly as HLD §8 predicted.
+- Message scoping (`owner_id`) required **zero schema/migration changes** —
+  it was already an opaque string; it now holds a real `User#id` instead of
+  a random UUID, precisely the promise this document made before Bonus 1
+  was built.
+- Security hardening: bcrypt hashing (never logged/returned), login
+  throttled 5/min/IP, signup throttled 10/min/IP (brute-force +
+  enumeration-abuse protection), constant-time-equivalent login path (no
+  username-existence timing leak).
+- Test coverage: `backend/test/` Minitest suite (zero-gem, actually
+  executes) grew from 33 to 45 passing tests including username-normalization
+  coverage; RSpec request/model specs for `User`/`AuthController` were added
+  and the three pre-existing message specs were updated to the new
+  auth-required contract — these remain unexecuted in this sandbox
+  (rubygems.org blocked, same standing limitation as the rest of this
+  project) but are correct against current code, verified by independent
+  QA/security review (`doc/qa-security-review-bonus1-auth.md`).
+- Frontend: `AuthApiService`, `AuthStoreService`, `LoginComponent`/`SignupComponent`,
+  state-driven auth guard (messenger UI only renders when logged in), 401
+  responses from message endpoints correctly clear the session client-side.
+  74/74 Vitest tests passing (grew from 39).
+- One accepted, disclosed trade-off: messages created before this change
+  (anonymous-UUID owners) become inaccessible — a one-time pre-launch
+  consideration, not a retroactive migration.
 
 ## Bonus 2 — Deploy the app (live demo)
 
@@ -291,7 +312,7 @@ zero-gem Minitest suite for the core logic.
 | 6 | Listing API endpoint | MET |
 | 7 | Session-cookie scoping | MET |
 | 8 | Wireframe fidelity | MET |
-| Bonus 1 | Auth | OUT OF SCOPE (client-approved), not implemented, clean extension seam exists |
+| Bonus 1 | Auth | IMPLEMENTED — has_secure_password, signup/login/logout/me, zero-migration owner_id reuse |
 | Bonus 2 | Live deploy | OUT OF SCOPE (client-approved), no live demo, deployable by client via README/docker-compose |
 | Bonus 3 | Webhooks | OUT OF SCOPE (client-approved), not implemented, schema pre-reserves fields for it |
 | — | GitHub push + live demo link | Local repo ready, remote set, push not yet executed (no creds in sandbox); no live demo |
