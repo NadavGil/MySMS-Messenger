@@ -242,20 +242,45 @@ held up in practice with zero schema changes.
 
 ## Bonus 2 — Deploy the app (live demo)
 
-**Verdict: OUT OF SCOPE (client-approved), no live demo exists; project is deployable by the client**
+**Verdict: DEPLOY-READY, blocked only on director-supplied credentials — not yet live.**
 
-- No CI/CD config, no Dockerfile for the app itself (only `docker-compose.yml`
-  for local Mongo), no hosting config (Heroku/Fly/Render manifests, etc.)
-  found in the repo.
-- `README.md` gives concrete, step-by-step local run instructions (Mongo via
-  `docker compose up -d`, backend via `bundle install` + `bin/rails server`,
-  frontend via `npm install` + `ng serve`), and the app is genuinely
-  config-driven (env vars for Mongo URI, Twilio creds, CORS origin, cookie
-  SameSite policy) per `doc/HLD.md` §7 — so a client with their own hosting
-  account could deploy it without code changes, but no one has actually done
-  so, and there is no live URL anywhere in the repo or docs.
-- Status: genuinely deferred; the groundwork (12-factor config) that would
-  make deployment straightforward is real and present.
+- Target: **Fly.io** for both `backend/` (Rails API) and `frontend/`
+  (Angular, built and served via nginx) as two separate Fly apps, genuinely
+  cross-origin (different subdomains) — plus **MongoDB Atlas free tier** as
+  the datastore.
+- `backend/Dockerfile` (multi-stage: build-essential/native-ext toolchain in
+  the build stage only, lean non-root final stage, binds `0.0.0.0`, honors
+  `$PORT`) + `backend/fly.toml` (health check on `/health`, `[env]`/secrets
+  split, a comment block listing the exact `fly secrets set` commands
+  needed).
+- `frontend/Dockerfile` (node build → nginx static serve) + `frontend/nginx.conf`
+  + `frontend/fly.toml`.
+- Real bugs found and fixed during design/review before any deploy attempt:
+  `config.force_ssl` would have 301-redirected Fly's plain-HTTP internal
+  health check (fixed via an explicit `/health` exclude); `CORS_ORIGINS`
+  had a silent localhost fallback that would have deployed clean while
+  quietly rejecting every real cross-origin request (now fails loudly at
+  boot in production, matching `SECRET_KEY_BASE`/`MONGO_URI`); no
+  `Gemfile.lock` is committed (this sandbox never had rubygems.org access
+  to generate one), so the Dockerfile was adjusted to resolve/install gems
+  fresh at build time rather than assume a frozen lockfile exists.
+- `CROSS_ORIGIN_COOKIES=true` is already wired into `fly.toml` — this is
+  the exact scenario that flag was built for during Bonus 1 and never
+  activated until now.
+- Disclosed, accepted caveats: Rack::Attack's rate limiting uses a
+  per-process in-memory store, fine at the planned single Fly machine but
+  would need a shared store before scaling past one; MongoDB Atlas network
+  access is planned as `0.0.0.0/0` for demo simplicity (documented
+  trade-off, not an oversight).
+- **What's blocking an actual live URL**: this cannot be deployed without
+  credentials only the director can provide — a Fly.io API token, a
+  MongoDB Atlas connection URI (from a free-tier cluster the director
+  creates), and confirmation of the real app names/region (the repo
+  currently has clearly-labeled placeholders, e.g. `mysms-messenger-api`).
+  Once supplied, deployment is the one remaining checkpoint (tech-design.md
+  §14, CP22).
+- Twilio stays on the fake gateway for the live demo per the director's
+  choice — send/list works end-to-end without real SMS delivery.
 
 ## Bonus 3 — Twilio delivery-status webhooks
 
@@ -313,6 +338,6 @@ held up in practice with zero schema changes.
 | 7 | Session-cookie scoping | MET |
 | 8 | Wireframe fidelity | MET |
 | Bonus 1 | Auth | IMPLEMENTED — has_secure_password, signup/login/logout/me, zero-migration owner_id reuse |
-| Bonus 2 | Live deploy | OUT OF SCOPE (client-approved), no live demo, deployable by client via README/docker-compose |
+| Bonus 2 | Live deploy | DEPLOY-READY (Fly.io + Atlas configs built, reviewed, fixed) — blocked on director's Fly/Atlas credentials, not yet live |
 | Bonus 3 | Webhooks | OUT OF SCOPE (client-approved), not implemented, schema pre-reserves fields for it |
 | — | GitHub push + live demo link | Local repo ready, remote set, push not yet executed (no creds in sandbox); no live demo |

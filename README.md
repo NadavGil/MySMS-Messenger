@@ -136,13 +136,46 @@ Rate limiting (`rack-attack`, `config/initializers/rack_attack.rb`) throttles
 `POST /api/v1/messages` to 10 requests/minute per identity before any real
 Twilio credentials go live, to bound cost-abuse risk.
 
+## Deploying (Bonus 2 — Fly.io + MongoDB Atlas)
+
+Full design in `doc/tech-design.md` §14. Deploy-ready configs exist
+(`backend/Dockerfile`/`fly.toml`, `frontend/Dockerfile`/`nginx.conf`/`fly.toml`),
+but nothing has been deployed yet — that needs your accounts/credentials:
+
+1. **MongoDB Atlas**: create a free-tier cluster, a database user, and (for
+   simplicity in this demo) allow network access from `0.0.0.0/0`. Copy the
+   `mongodb+srv://...` connection string.
+2. **Fly.io**: `fly launch` (or reuse the committed `fly.toml`) for each of
+   `backend/` and `frontend/`, picking real app names (replace the
+   `mysms-messenger-api` / `mysms-messenger-web` placeholders everywhere
+   they appear — including `frontend/src/environments/environment.production.ts`'s
+   `apiBaseUrl` and `backend/fly.toml`'s `CORS_ORIGINS`, which must match
+   exactly or CORS/login will fail).
+3. Set backend secrets (also listed as a comment block at the top of
+   `backend/fly.toml`):
+   ```
+   fly secrets set SECRET_KEY_BASE="$(bin/rails secret)" -a <your-api-app-name>
+   fly secrets set MONGO_URI="<your Atlas connection string>" -a <your-api-app-name>
+   ```
+4. `fly deploy` in `backend/`, then `fly deploy` in `frontend/`.
+5. Smoke test signup → login → send → list live, in that order — a green
+   `/health` check alone does **not** prove Mongo connectivity or CORS
+   correctness (both fail lazily/client-side, not at boot).
+
+**Known deploy-time caveat**: no `Gemfile.lock` is committed (this project
+was built in a sandbox with no `rubygems.org` access, so one was never
+generated); the Dockerfile resolves gems fresh at build time instead of
+using a frozen lockfile. If you'd like reproducible builds, run
+`bundle lock` locally (you already have a working `bundle install`) and
+commit the resulting `Gemfile.lock`.
+
 ## Repository layout
 
 ```
 MySMS-Messenger/
-├── doc/            # HLD.md, tech-design.md
-├── backend/        # Rails 7.1 API-only app
-├── frontend/       # Angular standalone SPA
+├── doc/            # HLD.md, tech-design.md, QA/security/CR reports
+├── backend/        # Rails 7.1 API-only app (+ Dockerfile, fly.toml)
+├── frontend/       # Angular standalone SPA (+ Dockerfile, nginx.conf, fly.toml)
 ├── docker-compose.yml
 └── .env.example
 ```
