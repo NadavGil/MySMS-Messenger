@@ -1,0 +1,47 @@
+%% MySMS Messenger — System / Component Architecture
+%% Companion to HLD.md §3 (System Context) and §4 (Key Components).
+%% Renders natively on GitHub/GitLab as a fenced ```mermaid block (also
+%% embedded inline in HLD.md §3) or via any Mermaid Live Editor / CLI.
+flowchart TB
+    Browser["Browser (user)"]
+
+    subgraph FE["Frontend — Angular SPA (Render Static Site)"]
+        SPA["Angular app<br/>Login/Signup, New Message, Message History"]
+    end
+
+    subgraph BE["Backend — Rails 7.1 API-only (Render Web Service)"]
+        direction TB
+        Ctrl["Controllers<br/>AuthController, MessagesController,<br/>Webhooks::TwilioStatusController"]
+        CurID["CurrentIdentity<br/>resolves signed HttpOnly cookie -> User"]
+        Svc["Services<br/>SendMessageService, ListMessagesService"]
+        DALIface["Repositories::MessageRepositoryInterface<br/>(create, find_for_owner,<br/>update_status_by_external_sid)"]
+        MongoRepo["MongoMessageRepository"]
+        MemRepo["InMemoryMessageRepository<br/>(tests / MESSAGE_REPOSITORY=in_memory)"]
+        GwIface["Gateways::SmsGatewayInterface<br/>(send_sms)"]
+        TwilioGw["TwilioSmsGateway"]
+        FakeGw["FakeSmsGateway<br/>(default; no live Twilio creds)"]
+        Container["Services::Container<br/>IoC wiring — picks concrete repo/gateway from ENV"]
+
+        Ctrl --> CurID
+        Ctrl --> Svc
+        Svc --> DALIface
+        Svc --> GwIface
+        MongoRepo -. implements .- DALIface
+        MemRepo -. implements .- DALIface
+        TwilioGw -. implements .- GwIface
+        FakeGw -. implements .- GwIface
+        Container -. wires .-> DALIface
+        Container -. wires .-> GwIface
+    end
+
+    Mongo[("MongoDB<br/>(Atlas in prod / Docker locally)")]
+    Twilio["Twilio API<br/>(SMS send + delivery-status webhook)"]
+
+    Browser <-->|"HTTPS + signed HttpOnly<br/>auth cookie"| SPA
+    SPA <-->|"JSON over fetch,<br/>withCredentials"| Ctrl
+    MongoRepo <--> Mongo
+    TwilioGw -->|"send_sms (outbound)"| Twilio
+    Twilio -->|"POST /api/v1/webhooks/twilio/status<br/>(signed X-Twilio-Signature)"| Ctrl
+
+    classDef external fill:#eee,stroke:#999,color:#333;
+    class Browser,Mongo,Twilio external;

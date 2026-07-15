@@ -7,7 +7,9 @@ SPA + **Ruby on Rails 7.1** JSON API (Mongoid/MongoDB) + an outbound
 
 See `doc/HLD.md` (architecture) and `doc/tech-design.md` (concrete design,
 API contract, checkpoint plan — auth design is in tech-design.md §13) for
-full details.
+full details. Architecture and deployment-topology diagrams (Mermaid) are
+embedded in `doc/HLD.md` §3/§7.5, and also saved standalone as
+`doc/architecture-diagram.mermaid` / `doc/deployment-diagram.mermaid`.
 
 ## Authentication (Bonus 1)
 

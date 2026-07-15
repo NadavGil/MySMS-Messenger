@@ -145,6 +145,57 @@ Bonus 2 were when each moved from deferred to in-scope.)
 4. **Rails API → Twilio** — outbound SMS via the SMS Gateway abstraction; the
    concrete adapter (Twilio vs. Stub) is chosen by configuration.
 
+**Diagram (2026-07-15 addition).** The same context, plus the component-level
+seams from §4, as a Mermaid diagram — renders natively on GitHub, or view/edit
+it at [mermaid.live](https://mermaid.live). Also saved standalone as
+`doc/architecture-diagram.mermaid`.
+
+```mermaid
+flowchart TB
+    Browser["Browser (user)"]
+
+    subgraph FE["Frontend — Angular SPA (Render Static Site)"]
+        SPA["Angular app<br/>Login/Signup, New Message, Message History"]
+    end
+
+    subgraph BE["Backend — Rails 7.1 API-only (Render Web Service)"]
+        direction TB
+        Ctrl["Controllers<br/>AuthController, MessagesController,<br/>Webhooks::TwilioStatusController"]
+        CurID["CurrentIdentity<br/>resolves signed HttpOnly cookie -> User"]
+        Svc["Services<br/>SendMessageService, ListMessagesService"]
+        DALIface["Repositories::MessageRepositoryInterface<br/>(create, find_for_owner,<br/>update_status_by_external_sid)"]
+        MongoRepo["MongoMessageRepository"]
+        MemRepo["InMemoryMessageRepository<br/>(tests / MESSAGE_REPOSITORY=in_memory)"]
+        GwIface["Gateways::SmsGatewayInterface<br/>(send_sms)"]
+        TwilioGw["TwilioSmsGateway"]
+        FakeGw["FakeSmsGateway<br/>(default; no live Twilio creds)"]
+        Container["Services::Container<br/>IoC wiring — picks concrete repo/gateway from ENV"]
+
+        Ctrl --> CurID
+        Ctrl --> Svc
+        Svc --> DALIface
+        Svc --> GwIface
+        MongoRepo -. implements .- DALIface
+        MemRepo -. implements .- DALIface
+        TwilioGw -. implements .- GwIface
+        FakeGw -. implements .- GwIface
+        Container -. wires .-> DALIface
+        Container -. wires .-> GwIface
+    end
+
+    Mongo[("MongoDB<br/>(Atlas in prod / Docker locally)")]
+    Twilio["Twilio API<br/>(SMS send + delivery-status webhook)"]
+
+    Browser <-->|"HTTPS + signed HttpOnly<br/>auth cookie"| SPA
+    SPA <-->|"JSON over fetch,<br/>withCredentials"| Ctrl
+    MongoRepo <--> Mongo
+    TwilioGw -->|"send_sms (outbound)"| Twilio
+    Twilio -->|"POST /api/v1/webhooks/twilio/status<br/>(signed X-Twilio-Signature)"| Ctrl
+
+    classDef external fill:#eee,stroke:#999,color:#333;
+    class Browser,Mongo,Twilio external;
+```
+
 ---
 
 ## 4. Key Components & Responsibilities
@@ -467,6 +518,37 @@ end-to-end without sending real SMS.
 
 **CORS** (`CORS_ORIGINS`) is set on the API to the deployed frontend origin
 (`mysms-messenger-web.onrender.com`), not `localhost` (§7.3).
+
+**Diagram (2026-07-15 addition).** The actual live topology — real deployed
+hostnames, not the `render.yaml` placeholder names above (see that file's own
+drift note, added during the 2026-07-15 bug blitz, for why they differ). Also
+saved standalone as `doc/deployment-diagram.mermaid`.
+
+```mermaid
+flowchart TB
+    User["Browser (user)"]
+
+    subgraph Render["Render (2 independently deployed services)"]
+        direction TB
+        Static["Static Site<br/>mysms-messenger-ehtu.onrender.com<br/>compiled Angular build, served from CDN"]
+        Web["Web Service (Docker runtime)<br/>mysms-messenger-server.onrender.com<br/>Rails 7.1 API-only, Puma"]
+    end
+
+    Atlas[("MongoDB Atlas<br/>free M0 tier")]
+    Twilio["Twilio API<br/>(SMS_PROVIDER=fake by default —<br/>no live creds supplied yet)"]
+
+    User -->|HTTPS| Static
+    User -.->|"HTTPS + cross-site cookie<br/>(CROSS_ORIGIN_COOKIES=true,<br/>SameSite=None; Secure)"| Web
+    Static -->|"fetch(apiBaseUrl + /api/v1/...),<br/>withCredentials"| Web
+    Web <-->|MONGO_URI| Atlas
+    Web -->|"outbound send (TwilioSmsGateway)"| Twilio
+    Twilio -.->|"POST /api/v1/webhooks/twilio/status<br/>(X-Twilio-Signature, HMAC-SHA1)"| Web
+
+    Static -. "different onrender.com subdomain —<br/>genuinely cross-origin, CORS_ORIGINS<br/>on Web must match Static's URL exactly" .- Web
+
+    classDef external fill:#eee,stroke:#999,color:#333;
+    class User,Atlas,Twilio external;
+```
 
 ---
 

@@ -1,0 +1,31 @@
+%% MySMS Messenger — Production Deployment Topology (Bonus 2)
+%% Companion to HLD.md §7.5 and tech-design.md §14.
+%% Renders natively on GitHub/GitLab as a fenced ```mermaid block (also
+%% embedded inline in HLD.md §7.5) or via any Mermaid Live Editor / CLI.
+%% NOTE: render.yaml still uses illustrative placeholder service names
+%% (mysms-messenger-api / mysms-messenger-web); the ACTUAL live services
+%% (created manually due to the Blueprint payment-info gotcha, see
+%% render.yaml's own comments) are named as shown below.
+flowchart TB
+    User["Browser (user)"]
+
+    subgraph Render["Render (2 independently deployed services)"]
+        direction TB
+        Static["Static Site<br/>mysms-messenger-ehtu.onrender.com<br/>compiled Angular build, served from CDN"]
+        Web["Web Service (Docker runtime)<br/>mysms-messenger-server.onrender.com<br/>Rails 7.1 API-only, Puma"]
+    end
+
+    Atlas[("MongoDB Atlas<br/>free M0 tier")]
+    Twilio["Twilio API<br/>(SMS_PROVIDER=fake by default —<br/>no live creds supplied yet)"]
+
+    User -->|HTTPS| Static
+    User -.->|"HTTPS + cross-site cookie<br/>(CROSS_ORIGIN_COOKIES=true,<br/>SameSite=None; Secure)"| Web
+    Static -->|"fetch(apiBaseUrl + /api/v1/...),<br/>withCredentials"| Web
+    Web <-->|MONGO_URI| Atlas
+    Web -->|"outbound send (TwilioSmsGateway)"| Twilio
+    Twilio -.->|"POST /api/v1/webhooks/twilio/status<br/>(X-Twilio-Signature, HMAC-SHA1)"| Web
+
+    Static -. "different onrender.com subdomain —<br/>genuinely cross-origin, CORS_ORIGINS<br/>on Web must match Static's URL exactly" .- Web
+
+    classDef external fill:#eee,stroke:#999,color:#333;
+    class User,Atlas,Twilio external;
