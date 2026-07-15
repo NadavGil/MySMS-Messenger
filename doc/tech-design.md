@@ -891,3 +891,338 @@ agreed. Integrate last.
    server-side short of rotating `secret_key_base`.)
 5. **Password policy** — 8-char minimum only. Any complexity/breach-list
    requirements? (Recommend not over-engineering pre-launch.)
+
+---
+
+## 14. Bonus 2: Deployment (Fly.io)
+
+> Implements HLD §8 Bonus 2. **Topology (locked upstream):** two **separate Fly
+> apps** on different subdomains — `mysms-messenger-api` (Rails) and
+> `mysms-messenger-web` (Angular/nginx) — so the SPA and API are **genuinely
+> cross-origin**. Datastore is **MongoDB Atlas free tier (M0)**. SMS stays the
+> **fake gateway** (`SMS_PROVIDER=fake`) — no Twilio creds this pass. Fly
+> terminates TLS at its proxy; `config.force_ssl = true` is already on
+> (`production.rb:15`). Secrets are injected via `fly secrets set`. **Nothing in
+> §0–§13 changes** — this is pure packaging + config; the 12-factor/config-driven
+> design (HLD §7.2) is being cashed in exactly as promised. Names/regions below
+> are **placeholders** the director finalizes at deploy time.
+
+### 14.1 backend/`Dockerfile` (multi-stage)
+
+Native extensions in the Gemfile that need a C toolchain at build time:
+**bcrypt** (`~> 3.1`, compiles a C ext), **bson**/**mongo** (Mongoid 9's driver —
+bson ships precompiled but falls back to compiling), **bootsnap**, **puma**. The
+toolchain (`build-essential`) must exist in the **build** stage only; the final
+stage stays lean (no compilers shipped).
+
+```dockerfile
+# ---- build stage: compile gems (needs a C toolchain) ----
+FROM ruby:3.3-slim AS build
+ENV RAILS_ENV=production \
+    BUNDLE_DEPLOYMENT=1 \
+    BUNDLE_WITHOUT=development:test \
+    BUNDLE_PATH=/usr/local/bundle
+# build-essential -> gcc/make for bcrypt + bson native ext; git for git_source
+# gems; libyaml-dev for psych. No libpq/sqlite (Mongoid, not ActiveRecord).
+RUN apt-get update -qq && apt-get install --no-install-recommends -y \
+      build-essential git libyaml-dev pkg-config \
+    && rm -rf /var/lib/apt/lists/*
+WORKDIR /app
+COPY Gemfile Gemfile.lock ./
+RUN bundle install && bundle clean --force \
+    && rm -rf "${BUNDLE_PATH}"/ruby/*/cache
+COPY . .
+RUN bundle exec bootsnap precompile app/ lib/ || true
+
+# ---- final stage: lean runtime, no compilers ----
+FROM ruby:3.3-slim AS final
+ENV RAILS_ENV=production \
+    BUNDLE_DEPLOYMENT=1 \
+    BUNDLE_WITHOUT=development:test \
+    BUNDLE_PATH=/usr/local/bundle
+# Runtime libs only. No build-essential. tzdata for UTC timestamp formatting.
+RUN apt-get update -qq && apt-get install --no-install-recommends -y \
+      tzdata \
+    && rm -rf /var/lib/apt/lists/* \
+    && useradd --create-home --shell /bin/bash app
+WORKDIR /app
+COPY --from=build /usr/local/bundle /usr/local/bundle
+COPY --from=build /app /app
+RUN chown -R app:app /app
+USER app
+EXPOSE 8080
+# Bind 0.0.0.0 (NOT localhost) so Fly's proxy can reach the process; honor the
+# PORT Fly injects, defaulting to 8080 to match fly.toml internal_port (§14.2).
+CMD ["sh", "-c", "bin/rails server -b 0.0.0.0 -p ${PORT:-8080}"]
+```
+
+**Binding & port (Fly-critical):**
+- Must bind `0.0.0.0` — a process bound to `localhost`/`127.0.0.1` is invisible
+  to Fly's proxy and every health check + request fails.
+- Fly injects `PORT` into the container (from `fly.toml`'s `internal_port`). The
+  `CMD` honors `${PORT:-8080}`; we fix `internal_port = 8080` in fly.toml so the
+  two always agree. (8080 chosen over Rails' default 3000 to match Fly's common
+  convention — either works as long as Dockerfile bind == `internal_port`.)
+- **Healthcheck-friendly boot:** `GET /health` returns `200 {"status":"ok"}` and
+  **skips the auth `before_action`** (`health_controller.rb`,
+  `skip_before_action :resolve_current_identity`, commit `6c5d42a`), so Fly's
+  check gets 200 without a cookie. **But see the force_ssl caveat in §14.6 — the
+  auth skip is necessary but NOT sufficient.**
+
+`Gemfile.lock` **must be committed** for `BUNDLE_DEPLOYMENT=1` (frozen install);
+confirm it is present before CP19.
+
+### 14.2 backend/`fly.toml`
+
+```toml
+app = "mysms-messenger-api"      # PLACEHOLDER — director sets real name
+primary_region = "iad"            # PLACEHOLDER — pick region near Atlas cluster
+
+[build]
+  # uses the Dockerfile in this directory (backend/)
+
+[env]
+  RAILS_ENV = "production"
+  MESSAGE_REPOSITORY = "mongo"
+  SMS_PROVIDER = "fake"           # no Twilio creds this pass
+  CROSS_ORIGIN_COOKIES = "true"   # genuinely cross-origin: SPA and API on different subdomains
+  RAILS_LOG_TO_STDOUT = "true"    # Fly captures stdout; ensure logs are visible
+  PORT = "8080"                   # matches internal_port + Dockerfile bind
+
+[http_service]
+  internal_port = 8080            # MUST equal the Dockerfile bound port
+  force_https = true              # Fly proxy redirects http->https at the edge
+  auto_stop_machines = true
+  auto_start_machines = true
+  min_machines_running = 0        # free-tier friendly; first request cold-starts
+
+  [[http_service.checks]]
+    method = "GET"
+    path = "/health"
+    interval = "15s"
+    timeout = "2s"
+    grace_period = "10s"          # allow Rails boot before first check
+```
+
+**Secrets vs `[env]` (the split matters):**
+
+| Value | Where | Why |
+|---|---|---|
+| `SECRET_KEY_BASE` | **`fly secrets set`** | Signs the `:msms_owner` cookie; `production.rb` does `ENV.fetch("SECRET_KEY_BASE")` and **fails loudly at boot if missing**. Generate with `bin/rails secret`. |
+| `MONGO_URI` | **`fly secrets set`** | Atlas `mongodb+srv://` string embeds the DB password — never in `[env]`/repo. `mongoid.yml` prod does `ENV.fetch("MONGO_URI")` (no default → hard fail if absent). |
+| `CORS_ORIGINS` | **`fly secrets set`** (or `[env]`) | The real web app URL (§14.6). Not secret per se, but set alongside the deploy so it isn't committed; either mechanism works. |
+| `RAILS_ENV`, `MESSAGE_REPOSITORY`, `SMS_PROVIDER`, `CROSS_ORIGIN_COOKIES`, `PORT` | **`[env]`** | Non-secret config; fine to commit in fly.toml. |
+| `TWILIO_*` | **omit** | Fake gateway this pass; add as secrets when creds arrive (Bonus, CP11 path). |
+
+Deploy-time secret commands (director runs, values redacted):
+```
+fly secrets set SECRET_KEY_BASE="$(bin/rails secret)" -a mysms-messenger-api
+fly secrets set MONGO_URI="mongodb+srv://USER:PASS@CLUSTER.mongodb.net/mysms_production?retryWrites=true&w=majority" -a mysms-messenger-api
+fly secrets set CORS_ORIGINS="https://mysms-messenger-web.fly.dev" -a mysms-messenger-api
+```
+
+### 14.3 frontend/`Dockerfile` (multi-stage) + `nginx.conf`
+
+Angular build uses the `@angular/build:application` builder (see `angular.json`);
+its production output lands in **`dist/frontend/browser`** (the `browser/`
+subfolder is mandatory with this builder — a common wrong-path pitfall). The
+production config already does the `environment.ts` → `environment.production.ts`
+`fileReplacement` (angular.json), so `ng build` (default = production) picks up
+the deployed `apiBaseUrl` — provided that file is correct at build time (§14.5).
+
+```dockerfile
+# ---- build stage: compile the SPA ----
+FROM node:20-slim AS build
+WORKDIR /app
+COPY package.json package-lock.json ./
+RUN npm ci
+COPY . .
+# apiBaseUrl must be correct in environment.production.ts BEFORE this runs (§14.5)
+RUN npm run build   # == `ng build`, defaultConfiguration=production
+
+# ---- final stage: serve static files via nginx ----
+FROM nginx:1.27-alpine AS final
+COPY nginx.conf /etc/nginx/conf.d/default.conf
+COPY --from=build /app/dist/frontend/browser /usr/share/nginx/html
+EXPOSE 8080
+CMD ["nginx", "-g", "daemon off;"]
+```
+
+`frontend/nginx.conf`:
+```nginx
+server {
+    listen 8080;                        # matches fly.toml internal_port (§14.4)
+    server_name _;
+    root /usr/share/nginx/html;
+    index index.html;
+
+    # gzip static assets
+    gzip on;
+    gzip_types text/css application/javascript application/json image/svg+xml;
+
+    # long-cache the hashed build assets (outputHashing: "all")
+    location ~* \.(?:js|css|woff2?|png|jpg|jpeg|gif|svg|ico)$ {
+        expires 1y;
+        add_header Cache-Control "public, immutable";
+        try_files $uri =404;
+    }
+
+    # SPA fallback: any unknown path -> index.html so client-side rendering
+    # boots (the app is a single page; even without a router this keeps deep
+    # links / refreshes from 404ing). index.html itself is never cached.
+    location / {
+        try_files $uri $uri/ /index.html;
+        add_header Cache-Control "no-cache";
+    }
+}
+```
+> Note: nginx does **not** proxy `/api/*` — the SPA calls the API's absolute
+> cross-origin URL (`apiBaseUrl`, §14.5), so this is a pure static file server.
+
+### 14.4 frontend/`fly.toml`
+
+```toml
+app = "mysms-messenger-web"       # PLACEHOLDER — director sets real name
+primary_region = "iad"            # PLACEHOLDER — match/near the API region
+
+[build]
+
+[http_service]
+  internal_port = 8080            # MUST equal nginx `listen` (§14.3)
+  force_https = true
+  auto_stop_machines = true
+  auto_start_machines = true
+  min_machines_running = 0
+
+  [[http_service.checks]]
+    method = "GET"
+    path = "/"                    # nginx serves index.html -> 200
+    interval = "15s"
+    timeout = "2s"
+```
+
+### 14.5 Production `apiBaseUrl` — build-time substitution
+
+Angular production builds are **static**: `apiBaseUrl` is baked in at `ng build`
+time, so it **must be correct before the frontend Docker build's `npm run build`
+step runs** — there is no runtime env var to read (the compiled JS is already
+minified with the value inlined). `environment.production.ts` currently ships
+`apiBaseUrl: ''` (same-origin assumption). For this cross-origin, two-app deploy
+that is **wrong** — it must be the API app's absolute origin.
+
+**Chosen approach (cleanest for a one-shot fly deploy): commit the real API URL
+into `environment.production.ts`.** Once the director knows the API app name
+(e.g. `https://mysms-messenger-api.fly.dev`), set:
+```ts
+export const environment = {
+  production: true,
+  apiBaseUrl: 'https://mysms-messenger-api.fly.dev',   // API app origin, NO trailing /api
+};
+```
+- Honors the existing convention (origin only; `MessagesApiService` appends
+  `/api/v1/...`) — keeps the QA-M2 double-`/api` fix intact.
+- **Rejected alternative:** Docker `ARG API_BASE_URL` + `sed` into the file at
+  build time. More moving parts and Fly's default `fly deploy` doesn't pass build
+  args cleanly without `--build-arg`; a committed value is simpler and reviewable
+  for a one-shot demo. (If the URL must stay out of git, fall back to the ARG
+  approach — flagged as director's call.)
+- **Ordering dependency:** the API app must be named/created first so its
+  hostname is known before the web image is built. Reflected in CP22.
+
+### 14.6 CORS / cookies / force_ssl for the real deploy
+
+- **CORS_ORIGINS** → the real web app origin, e.g.
+  `https://mysms-messenger-web.fly.dev`, via `fly secrets set` (or `[env]`) on
+  the **API** app. `cors.rb` splits on comma and already sets
+  `credentials: true`; wildcard is impossible with credentials (unchanged).
+- **CROSS_ORIGIN_COOKIES=true** is **required** now (set in API `[env]`, §14.2):
+  the SPA and API are on different registrable hosts, so the `:msms_owner`
+  cookie must be `SameSite=None; Secure` to round-trip — exactly the switch
+  `.env.example` documents. This depends on HTTPS, which Fly provides.
+- **Angular `withCredentials: true`** is already set in the API service (§8.3) —
+  no change.
+
+- **force_ssl vs the health check — THE FINDING (flagged):**
+  `config.silence_healthcheck_path = "/health"` (`production.rb:17`) is a Rails
+  7.1 feature that **only silences the request LOG line** for that path. It does
+  **NOT** exempt the path from `config.force_ssl`. These are two different
+  mechanisms and are frequently conflated. With `force_ssl = true`, Rails
+  **301-redirects any request it does not consider SSL** to `https://`. Fly's
+  external traffic arrives with `X-Forwarded-Proto: https` (Rails honors it, so
+  real users are fine), **but Fly's internal `[[http_service.checks]]` hit the
+  machine over plain HTTP and may not carry `X-Forwarded-Proto: https`** — in
+  which case `GET /health` returns **301, not 200, and the health check fails**,
+  taking the whole deploy down even though the app is healthy. The auth-skip on
+  the health controller does not help here — the redirect happens in middleware
+  before the controller runs.
+  **Fix — exempt `/health` from the SSL redirect** in `production.rb`:
+  ```ruby
+  config.force_ssl = true
+  config.ssl_options = {
+    redirect: { exclude: ->(request) { request.path == "/health" } }
+  }
+  ```
+  This keeps HSTS + redirect for everything else while letting the internal
+  health check succeed over HTTP. (Alternative: configure the Fly check to use
+  TLS, but the `ssl_options` exclude is self-contained and provider-agnostic —
+  preferred.)
+
+### 14.7 MongoDB Atlas setup (runbook — director executes)
+
+1. **Create a free cluster.** Atlas → *Build a Database* → **M0 Free** tier.
+   Pick a cloud/region **close to the Fly `primary_region`** (e.g. AWS
+   `us-east-1` ↔ Fly `iad`) to keep latency low. Name it e.g. `mysms`.
+2. **Create a database user.** *Database Access* → *Add New Database User* →
+   auth method **Password**. Username e.g. `mysms_app`, strong generated
+   password. Role: **Read and write to any database** (or scope to
+   `mysms_production`). Record the password (it goes into `MONGO_URI` only).
+3. **Network access allow-list.** *Network Access* → *Add IP Address* →
+   **`0.0.0.0/0`** (allow from anywhere). **Security tradeoff (flagged):** Fly
+   machines don't have stable egress IPs on the free setup, so pinning specific
+   IPs is impractical for this demo; `0.0.0.0/0` is acceptable **only because**
+   access still requires the DB username+password in the secret `MONGO_URI`.
+   Note this as demo-only — a production hardening step is a dedicated
+   egress IP / PrivateLink + a narrow allow-list.
+4. **Get the connection string.** *Database* → *Connect* → *Drivers* → copy the
+   `mongodb+srv://` string. Insert the user's password and append the DB name:
+   ```
+   mongodb+srv://mysms_app:<PASSWORD>@mysms.xxxxx.mongodb.net/mysms_production?retryWrites=true&w=majority
+   ```
+   (The `/mysms_production` path segment sets the default database Mongoid uses.)
+5. **Set the secret** on the API app:
+   ```
+   fly secrets set MONGO_URI="mongodb+srv://mysms_app:<PASSWORD>@mysms.xxxxx.mongodb.net/mysms_production?retryWrites=true&w=majority" -a mysms-messenger-api
+   ```
+6. **Create indexes** after first boot (User unique index + Message compound
+   index): `fly ssh console -a mysms-messenger-api -C "bin/rails db:mongoid:create_indexes"`.
+
+### 14.8 Checkpoint plan (continues CP1–CP18)
+
+| CP | Story | Acceptance criteria | Role | Size |
+|----|-------|---------------------|------|------|
+| **CP19** | Backend container + Fly config | `backend/Dockerfile` (multi-stage, build-essential in build stage only, lean final); binds `0.0.0.0` on `${PORT:-8080}`; `backend/fly.toml` with `internal_port=8080`, `[[http_service.checks]]` → `/health`, `[env]` (RAILS_ENV/MESSAGE_REPOSITORY/SMS_PROVIDER/CROSS_ORIGIN_COOKIES/PORT) and documented secrets; `docker build` succeeds locally; `Gemfile.lock` committed | Senior BE | M |
+| **CP20** | Frontend container + nginx + Fly config | `frontend/Dockerfile` (node build → nginx serve of `dist/frontend/browser`); `frontend/nginx.conf` (listen 8080, hashed-asset caching, SPA fallback to `index.html`); `frontend/fly.toml` `internal_port=8080` check `/`; `docker build` succeeds; container serves the SPA locally | Senior FE | M |
+| **CP21** | Prod CORS/cookie/force_ssl fixes | `environment.production.ts` `apiBaseUrl` set to API app origin (no `/api`); `production.rb` adds `config.ssl_options` `/health` redirect exclude (the force_ssl/health finding, §14.6); confirm `CROSS_ORIGIN_COOKIES=true` + `CORS_ORIGINS` wiring; no code path other than config changes | Senior BE + FE | S |
+| **CP22** | Atlas provisioning + live `fly deploy` | Atlas M0 cluster + DB user + `0.0.0.0/0` allow-list + `mongodb+srv://` string; `fly secrets set` SECRET_KEY_BASE/MONGO_URI/CORS_ORIGINS; `fly deploy` both apps (API first so its hostname is known for CP21's build — see §14.5 ordering); `create_indexes`; end-to-end signup→login→send→history over HTTPS across the two origins | Director + Tech Lead | M |
+
+**BLOCKED-ON-DIRECTOR (flagged explicitly):** **CP22 cannot be completed by the
+dev team** — it needs (a) a **Fly.io account + API token** (`fly auth login` /
+`FLY_API_TOKEN`), and (b) the **Atlas cluster + `MONGO_URI`**. CP19–CP21 are
+fully doable now (all artifacts committed, builds verified locally); CP22 is the
+one checkpoint gated on the director supplying credentials. Also director must
+confirm the **final app names** (they feed `CORS_ORIGINS` and the frontend
+`apiBaseUrl`) — a naming decision that must precede CP21's frontend build.
+
+### 14.9 Open questions for the director
+
+1. **Final Fly app names + region** — placeholders `mysms-messenger-api` /
+   `mysms-messenger-web` and `iad` used throughout; confirm so `CORS_ORIGINS` and
+   the baked-in `apiBaseUrl` are correct (blocks CP21's frontend build).
+2. **`apiBaseUrl` in git?** — recommended committed into
+   `environment.production.ts` (§14.5); confirm OK, or switch to the Docker
+   build-arg approach to keep the URL out of the repo.
+3. **Atlas allow-list `0.0.0.0/0`** — accepted for this demo (password-gated);
+   confirm no requirement for a locked-down egress IP / PrivateLink this pass.
+4. **Cold starts** — `min_machines_running = 0` (free-tier friendly) means the
+   first request after idle is slow. Acceptable for a live demo, or pin ≥1?
+5. **Fly credentials / Atlas URI** — needed to execute CP22 (see BLOCKED note).
