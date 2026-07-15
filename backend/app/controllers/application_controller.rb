@@ -11,6 +11,17 @@ class ApplicationController < ActionController::API
   include ActionController::Cookies
   include CurrentIdentity
 
+  # REFACTOR (post-live-run audit): ActionController::API enables
+  # ParamsWrapper by default, which duplicates every JSON body under a
+  # controller-derived key (e.g. POST /api/v1/messages with
+  # {"to_number":...,"body":...} also arrives wrapped as
+  # params[:message] = {"to_number":...,"body":...}). Harmless — the
+  # top-level params SendMessageService reads are unaffected — but it's
+  # log/param noise with no purpose in a flat, non-resource-form JSON API
+  # that never reads the wrapped key. Disabled globally rather than per
+  # controller.
+  wrap_parameters false
+
   # qa-report-round1.md N3: a Mongo outage/driver error is repackaged by
   # MongoMessageRepository into Repositories::RepositoryError; surface it as
   # a structured 5xx matching the API's existing `{ errors: {...} }` shape

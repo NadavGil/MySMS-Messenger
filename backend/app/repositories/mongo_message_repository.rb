@@ -1,10 +1,6 @@
 module Repositories
-  # Raised by MongoMessageRepository when the underlying Mongo driver fails
-  # (connection refused, replica-set failover, timeout, etc). Callers
-  # (services/controllers) can rescue this one repository-layer error
-  # instead of needing to know about Mongo::Error/Mongo::Error::* internals
-  # (qa-report-round1.md N3).
-  class RepositoryError < StandardError; end
+  # Repositories::RepositoryError now lives in its own file
+  # (app/repositories/repository_error.rb) — see that file for why.
 
   # Concrete MongoDB-backed implementation (tech-design.md §3.2). Wraps
   # MessageDocument (Mongoid) and only ever hands Domain::Message objects
