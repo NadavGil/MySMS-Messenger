@@ -17,5 +17,5 @@ export const environment = {
   // PLACEHOLDER service name — director confirms the final Render service
   // name/URL (tech-design.md §14.9 open question 1) before the real deploy
   // build; Render assigns hostnames as <service-name>.onrender.com.
-  apiBaseUrl: 'https://mysms-messenger-api.onrender.com',
+  apiBaseUrl: 'https://mysms-messenger-server.onrender.com',
 };
