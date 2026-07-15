@@ -4,12 +4,13 @@
 class User
   include Mongoid::Document
   include Mongoid::Timestamps
-  # If `has_secure_password` raises NoMethodError at boot, add explicitly:
-  #   include ActiveModel::SecurePassword
-  # (ActiveRecord auto-includes it; Mongoid versions vary. Confirmed fine at
-  # CP13 in this environment's Gemfile.lock — bcrypt gem is what actually
-  # supplies BCrypt::Password; has_secure_password itself ships with
-  # ActiveModel, which Mongoid apps already pull in via activesupport deps.)
+  # CONFIRMED on the director's first real boot (post-live-run): Mongoid
+  # does NOT auto-include this the way ActiveRecord::Base does, so
+  # `has_secure_password` raised `NameError: undefined local variable or
+  # method 'has_secure_password'` without it. bcrypt (the Gemfile
+  # dependency) only supplies BCrypt::Password itself; the
+  # has_secure_password DSL method comes from this ActiveModel module.
+  include ActiveModel::SecurePassword
   has_secure_password
 
   field :username,        type: String
