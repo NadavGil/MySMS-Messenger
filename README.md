@@ -165,6 +165,23 @@ Twilio webhook: `POST /api/v1/webhooks/twilio/status` →
   `https://mysms-messenger-server.onrender.com/api/v1/webhooks/twilio/status`,
   and the whole path lights up with no further code changes.
 
+**Testing the webhook without a real Twilio account:**
+`backend/script/test_webhook.sh` simulates a genuine, correctly-signed
+Twilio callback against a running instance (local or deployed) — it signs
+up a user, sends a message, builds a valid `X-Twilio-Signature` by hand,
+posts a simulated "delivered" callback, and re-fetches messages so you can
+confirm `status` actually changed:
+
+```
+BASE_URL=https://mysms-messenger-server.onrender.com \
+AUTH_TOKEN=<must match TWILIO_AUTH_TOKEN set on that backend> \
+./backend/script/test_webhook.sh
+```
+
+(Requires `TWILIO_AUTH_TOKEN` and `TWILIO_STATUS_CALLBACK_URL` to already be
+set on the target backend — the webhook is disabled/503 otherwise, by
+design.)
+
 ## Deploying (Bonus 2 — Render + MongoDB Atlas)
 
 Full design in `doc/tech-design.md` §14. **Switched from an earlier Fly.io
