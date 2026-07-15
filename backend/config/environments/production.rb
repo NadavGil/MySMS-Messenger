@@ -16,14 +16,15 @@ Rails.application.configure do
 
   # tech-design.md §14.6 (the force_ssl/health-check finding):
   # silence_healthcheck_path below only silences the request LOG line for
-  # /health - it does NOT exempt /health from the force_ssl redirect. Fly's
-  # internal http_service health check hits the machine over plain HTTP and
-  # may not carry X-Forwarded-Proto: https, so without this exclude Rails
-  # 301-redirects the check to https:// and Fly sees a failing check (301,
-  # not 200) even though the app is healthy - the auth skip on
-  # HealthController does not help, since this redirect happens in
-  # middleware before the controller runs. This keeps HSTS + the redirect
-  # for every other path; only /health is exempted.
+  # /health - it does NOT exempt /health from the force_ssl redirect. Cloud
+  # host internal health checks (Render, and Fly.io before it) hit the
+  # container over plain HTTP and may not carry X-Forwarded-Proto: https,
+  # so without this exclude Rails 301-redirects the check to https:// and
+  # the platform sees a failing check (301, not 200) even though the app is
+  # healthy - the auth skip on HealthController does not help, since this
+  # redirect happens in middleware before the controller runs. This keeps
+  # HSTS + the redirect for every other path; only /health is exempted.
+  # Provider-agnostic fix - applies regardless of hosting platform.
   config.ssl_options = {
     redirect: { exclude: ->(request) { request.path == "/health" } }
   }

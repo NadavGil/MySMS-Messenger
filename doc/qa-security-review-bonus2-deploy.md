@@ -1,7 +1,22 @@
-# QA + Security Review — Bonus 2: Deployment (Fly.io)
+# QA + Security Review — Bonus 2: Deployment (originally Fly.io)
 
-Scope: `doc/tech-design.md` §14 (locked design) vs. the actual committed
-files: `backend/Dockerfile`, `backend/fly.toml`,
+> **Note (2026-07-15): the deploy target was switched from Fly.io to
+> Render** after this review was written (Fly.io now requires a credit
+> card with no meaningful free tier; Render's free Web Service + Static
+> Site instances are genuinely $0/month, no card required). The `fly.toml`
+> files this review examined have been deleted and replaced by a
+> repo-root `render.yaml` Blueprint; `frontend/Dockerfile`/`nginx.conf` were
+> also removed since Render's Static Site service needs neither. **The
+> substance of every finding below still applies** — the force_ssl/health-
+> check redirect bug, the CORS silent-fallback fix, the rack-attack
+> per-process-store caveat, and the missing-`Gemfile.lock` trade-off are
+> all provider-agnostic and remain true on Render. Only the specific
+> file/command names below (`fly.toml`, `fly secrets set`, etc.) are
+> superseded — see `doc/tech-design.md` §14 for the current Render-specific
+> config.
+
+Scope (as originally reviewed): `doc/tech-design.md` §14 (locked design) vs.
+the actual committed files: `backend/Dockerfile`, `backend/fly.toml`,
 `backend/config/environments/production.rb`,
 `backend/config/initializers/cors.rb`,
 `backend/app/controllers/concerns/current_identity.rb`,

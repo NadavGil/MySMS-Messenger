@@ -894,18 +894,33 @@ agreed. Integrate last.
 
 ---
 
-## 14. Bonus 2: Deployment (Fly.io)
+## 14. Bonus 2: Deployment (Render)
 
-> Implements HLD §8 Bonus 2. **Topology (locked upstream):** two **separate Fly
-> apps** on different subdomains — `mysms-messenger-api` (Rails) and
-> `mysms-messenger-web` (Angular/nginx) — so the SPA and API are **genuinely
-> cross-origin**. Datastore is **MongoDB Atlas free tier (M0)**. SMS stays the
-> **fake gateway** (`SMS_PROVIDER=fake`) — no Twilio creds this pass. Fly
-> terminates TLS at its proxy; `config.force_ssl = true` is already on
-> (`production.rb:15`). Secrets are injected via `fly secrets set`. **Nothing in
-> §0–§13 changes** — this is pure packaging + config; the 12-factor/config-driven
-> design (HLD §7.2) is being cashed in exactly as promised. Names/regions below
-> are **placeholders** the director finalizes at deploy time.
+> Implements HLD §8 Bonus 2. **Superseded plan (2026-07-15): switched from
+> Fly.io to Render.** Fly.io now requires a credit card on every new org and
+> has no meaningful free tier (~$1.94/month minimum for an always-on
+> machine); Render's free Web Service and Static Site instance types are
+> genuinely $0/month with **no credit card required** to create them
+> (confirmed via `render.com/docs/free`), at the cost of the free web
+> service spinning down after 15 minutes idle (≈1 min cold start on the next
+> request) and a 750-free-instance-hour/month cap. Acceptable trade-offs for
+> a take-home demo. All of §0–§13 is unchanged.
+>
+> **Topology (locked upstream):** two Render services on different
+> subdomains — `mysms-messenger-api` (Rails, Docker-runtime **Web Service**)
+> and `mysms-messenger-web` (Angular, a free **Static Site** — no nginx/
+> Docker needed for the frontend at all on Render) — so the SPA and API are
+> **genuinely cross-origin**. Both are declared together in the repo-root
+> `render.yaml` Blueprint (Render's IaC format), rather than per-service
+> config files. Datastore is still **MongoDB Atlas free tier (M0)** — Render
+> doesn't offer managed MongoDB, so Atlas is unchanged from the original
+> plan. SMS stays the **fake gateway** (`SMS_PROVIDER=fake`) — no Twilio
+> creds this pass. Render terminates TLS at its proxy, same as Fly did;
+> `config.force_ssl = true` is already on (`production.rb:15`) and the
+> `/health` SSL-redirect exclude (§14.6) still applies. Secrets
+> (`SECRET_KEY_BASE`, `MONGO_URI`) are set in the Render dashboard
+> (`sync: false` in `render.yaml`), never committed. Names/region below are
+> **placeholders** the director finalizes at deploy time.
 
 ### 14.1 backend/`Dockerfile` (multi-stage)
 
@@ -969,193 +984,163 @@ CMD ["sh", "-c", "bin/rails server -b 0.0.0.0 -p ${PORT:-8080}"]
   check gets 200 without a cookie. **But see the force_ssl caveat in §14.6 — the
   auth skip is necessary but NOT sufficient.**
 
-`Gemfile.lock` **must be committed** for `BUNDLE_DEPLOYMENT=1` (frozen install);
-confirm it is present before CP19.
+**Note (2026-07-15, Render switch):** the doc above still reflects the
+original `BUNDLE_DEPLOYMENT=1` + committed-`Gemfile.lock` design; the
+Dockerfile actually committed to the repo does **not** use deployment mode
+(no `Gemfile.lock` was ever generated — see the comment block at the top of
+`backend/Dockerfile` and the README's "Known deploy-time caveat"). This is a
+pre-existing, already-documented trade-off, unaffected by the Fly→Render
+switch: Render's Docker runtime builds the same Dockerfile exactly as Fly
+did, no changes needed there.
 
-### 14.2 backend/`fly.toml`
+### 14.2 Render Blueprint (`render.yaml`, repo root)
 
-```toml
-app = "mysms-messenger-api"      # PLACEHOLDER — director sets real name
-primary_region = "iad"            # PLACEHOLDER — pick region near Atlas cluster
+Render's config-as-code format declares every service in one file at the
+repo root (replaces the two separate `fly.toml` files, one per app, that
+Fly's model required):
 
-[build]
-  # uses the Dockerfile in this directory (backend/)
+```yaml
+services:
+  - type: web
+    name: mysms-messenger-api
+    runtime: docker
+    rootDir: backend
+    dockerfilePath: ./Dockerfile
+    plan: free
+    region: oregon               # PLACEHOLDER — pick region near Atlas cluster
+    healthCheckPath: /health
+    autoDeploy: true
+    envVars:
+      - key: RAILS_ENV
+        value: production
+      - key: MESSAGE_REPOSITORY
+        value: mongo
+      - key: SMS_PROVIDER
+        value: fake               # no Twilio creds this pass
+      - key: CROSS_ORIGIN_COOKIES
+        value: "true"             # genuinely cross-origin: SPA and API on different onrender.com subdomains
+      - key: RAILS_LOG_TO_STDOUT
+        value: "true"
+      - key: CORS_ORIGINS
+        value: https://mysms-messenger-web.onrender.com   # PLACEHOLDER — must equal the static site's real URL
+      - key: SECRET_KEY_BASE
+        sync: false               # set manually in the Render dashboard: `bin/rails secret`
+      - key: MONGO_URI
+        sync: false               # set manually: your Atlas mongodb+srv://... connection string
 
-[env]
-  RAILS_ENV = "production"
-  MESSAGE_REPOSITORY = "mongo"
-  SMS_PROVIDER = "fake"           # no Twilio creds this pass
-  CROSS_ORIGIN_COOKIES = "true"   # genuinely cross-origin: SPA and API on different subdomains
-  RAILS_LOG_TO_STDOUT = "true"    # Fly captures stdout; ensure logs are visible
-  PORT = "8080"                   # matches internal_port + Dockerfile bind
-
-[http_service]
-  internal_port = 8080            # MUST equal the Dockerfile bound port
-  force_https = true              # Fly proxy redirects http->https at the edge
-  auto_stop_machines = true
-  auto_start_machines = true
-  min_machines_running = 0        # free-tier friendly; first request cold-starts
-
-  [[http_service.checks]]
-    method = "GET"
-    path = "/health"
-    interval = "15s"
-    timeout = "2s"
-    grace_period = "10s"          # allow Rails boot before first check
+  - type: web
+    name: mysms-messenger-web
+    runtime: static
+    rootDir: frontend
+    buildCommand: npm ci && npm run build
+    staticPublishPath: dist/frontend/browser
+    plan: free
+    autoDeploy: true
+    routes:
+      - type: rewrite
+        source: /*
+        destination: /index.html
 ```
 
-**Secrets vs `[env]` (the split matters):**
+**Secrets vs `envVars` (the split matters):**
 
 | Value | Where | Why |
 |---|---|---|
-| `SECRET_KEY_BASE` | **`fly secrets set`** | Signs the `:msms_owner` cookie; `production.rb` does `ENV.fetch("SECRET_KEY_BASE")` and **fails loudly at boot if missing**. Generate with `bin/rails secret`. |
-| `MONGO_URI` | **`fly secrets set`** | Atlas `mongodb+srv://` string embeds the DB password — never in `[env]`/repo. `mongoid.yml` prod does `ENV.fetch("MONGO_URI")` (no default → hard fail if absent). |
-| `CORS_ORIGINS` | **`fly secrets set`** (or `[env]`) | The real web app URL (§14.6). Not secret per se, but set alongside the deploy so it isn't committed; either mechanism works. |
-| `RAILS_ENV`, `MESSAGE_REPOSITORY`, `SMS_PROVIDER`, `CROSS_ORIGIN_COOKIES`, `PORT` | **`[env]`** | Non-secret config; fine to commit in fly.toml. |
-| `TWILIO_*` | **omit** | Fake gateway this pass; add as secrets when creds arrive (Bonus, CP11 path). |
+| `SECRET_KEY_BASE` | **Render dashboard, `sync: false` in render.yaml** | Signs the `:msms_owner` cookie; `production.rb` does `ENV.fetch("SECRET_KEY_BASE")` and **fails loudly at boot if missing**. Generate with `bin/rails secret`. |
+| `MONGO_URI` | **Render dashboard, `sync: false`** | Atlas `mongodb+srv://` string embeds the DB password — never committed. `mongoid.yml` prod does `ENV.fetch("MONGO_URI")` (no default → hard fail if absent). |
+| `CORS_ORIGINS` | **`envVars` in render.yaml** | The real web service URL (§14.6). Not secret per se, but must exactly match the static site's real `onrender.com` hostname once assigned. |
+| `RAILS_ENV`, `MESSAGE_REPOSITORY`, `SMS_PROVIDER`, `CROSS_ORIGIN_COOKIES` | **`envVars` in render.yaml** | Non-secret config; fine to commit. |
+| `TWILIO_*` | **omit** | Fake gateway this pass; add as dashboard secrets when creds arrive (Bonus, CP11 path). |
+| `PORT` | **not set — Render injects it automatically** | The Dockerfile already honors `${PORT:-8080}` (unchanged from the Fly design); no config needed. |
 
-Deploy-time secret commands (director runs, values redacted):
-```
-fly secrets set SECRET_KEY_BASE="$(bin/rails secret)" -a mysms-messenger-api
-fly secrets set MONGO_URI="mongodb+srv://USER:PASS@CLUSTER.mongodb.net/mysms_production?retryWrites=true&w=majority" -a mysms-messenger-api
-fly secrets set CORS_ORIGINS="https://mysms-messenger-web.fly.dev" -a mysms-messenger-api
-```
+Render assigns the real hostname once the service is first created (e.g.
+`mysms-messenger-api.onrender.com`); there's no separate "set a secret"
+command like `fly secrets set` — everything is done in the Render dashboard
+or via the Blueprint's `envVars`.
 
-### 14.3 frontend/`Dockerfile` (multi-stage) + `nginx.conf`
+### 14.3 Frontend: Render Static Site (no Docker/nginx needed)
 
-Angular build uses the `@angular/build:application` builder (see `angular.json`);
-its production output lands in **`dist/frontend/browser`** (the `browser/`
-subfolder is mandatory with this builder — a common wrong-path pitfall). The
-production config already does the `environment.ts` → `environment.production.ts`
-`fileReplacement` (angular.json), so `ng build` (default = production) picks up
-the deployed `apiBaseUrl` — provided that file is correct at build time (§14.5).
+Angular build uses the `@angular/build:application` builder (see
+`angular.json`); its production output lands in **`dist/frontend/browser`**
+(the `browser/` subfolder is mandatory with this builder — a common
+wrong-path pitfall). The production config already does the
+`environment.ts` → `environment.production.ts` `fileReplacement`
+(angular.json), so `npm run build` (== `ng build`, default = production)
+picks up the deployed `apiBaseUrl` — provided that file is correct at build
+time (§14.5).
 
-```dockerfile
-# ---- build stage: compile the SPA ----
-FROM node:20-slim AS build
-WORKDIR /app
-COPY package.json package-lock.json ./
-RUN npm ci
-COPY . .
-# apiBaseUrl must be correct in environment.production.ts BEFORE this runs (§14.5)
-RUN npm run build   # == `ng build`, defaultConfiguration=production
-
-# ---- final stage: serve static files via nginx ----
-FROM nginx:1.27-alpine AS final
-COPY nginx.conf /etc/nginx/conf.d/default.conf
-COPY --from=build /app/dist/frontend/browser /usr/share/nginx/html
-EXPOSE 8080
-CMD ["nginx", "-g", "daemon off;"]
-```
-
-`frontend/nginx.conf`:
-```nginx
-server {
-    listen 8080;                        # matches fly.toml internal_port (§14.4)
-    server_name _;
-    root /usr/share/nginx/html;
-    index index.html;
-
-    # gzip static assets
-    gzip on;
-    gzip_types text/css application/javascript application/json image/svg+xml;
-
-    # long-cache the hashed build assets (outputHashing: "all")
-    location ~* \.(?:js|css|woff2?|png|jpg|jpeg|gif|svg|ico)$ {
-        expires 1y;
-        add_header Cache-Control "public, immutable";
-        try_files $uri =404;
-    }
-
-    # SPA fallback: any unknown path -> index.html so client-side rendering
-    # boots (the app is a single page; even without a router this keeps deep
-    # links / refreshes from 404ing). index.html itself is never cached.
-    location / {
-        try_files $uri $uri/ /index.html;
-        add_header Cache-Control "no-cache";
-    }
-}
-```
-> Note: nginx does **not** proxy `/api/*` — the SPA calls the API's absolute
-> cross-origin URL (`apiBaseUrl`, §14.5), so this is a pure static file server.
-
-### 14.4 frontend/`fly.toml`
-
-```toml
-app = "mysms-messenger-web"       # PLACEHOLDER — director sets real name
-primary_region = "iad"            # PLACEHOLDER — match/near the API region
-
-[build]
-
-[http_service]
-  internal_port = 8080            # MUST equal nginx `listen` (§14.3)
-  force_https = true
-  auto_stop_machines = true
-  auto_start_machines = true
-  min_machines_running = 0
-
-  [[http_service.checks]]
-    method = "GET"
-    path = "/"                    # nginx serves index.html -> 200
-    interval = "15s"
-    timeout = "2s"
-```
+**Render switch simplifies this significantly**: a Render **Static Site**
+builds the repo directly (`buildCommand: npm ci && npm run build`,
+`staticPublishPath: dist/frontend/browser` in `render.yaml`) and serves the
+output from Render's own CDN — no Dockerfile, no nginx config, and no
+container to keep warm at all. Static Sites are free unconditionally (no
+spin-down, no instance-hour cap), unlike the free Web Service tier. The
+`frontend/Dockerfile` and `frontend/nginx.conf` used for the Fly.io deploy
+have been removed as dead code; the SPA-fallback behavior they provided
+(`try_files ... /index.html`) is replicated by the `routes: - type: rewrite`
+entry in `render.yaml`.
 
 ### 14.5 Production `apiBaseUrl` — build-time substitution
 
 Angular production builds are **static**: `apiBaseUrl` is baked in at `ng build`
-time, so it **must be correct before the frontend Docker build's `npm run build`
+time, so it **must be correct before the Render Static Site's `npm run build`
 step runs** — there is no runtime env var to read (the compiled JS is already
-minified with the value inlined). `environment.production.ts` currently ships
-`apiBaseUrl: ''` (same-origin assumption). For this cross-origin, two-app deploy
-that is **wrong** — it must be the API app's absolute origin.
+minified with the value inlined). This constraint is identical to the Fly.io
+design; only the hosting provider changed. `environment.production.ts` ships
+`apiBaseUrl: 'https://mysms-messenger-api.onrender.com'` (placeholder) — it
+must be the API service's absolute origin (never same-origin/`''`, since the
+SPA and API are genuinely cross-origin services).
 
-**Chosen approach (cleanest for a one-shot fly deploy): commit the real API URL
-into `environment.production.ts`.** Once the director knows the API app name
-(e.g. `https://mysms-messenger-api.fly.dev`), set:
+**Chosen approach (cleanest for a Blueprint-based deploy): commit the real API
+URL into `environment.production.ts`.** Once the director knows the API
+service's real name (Render assigns `https://<service-name>.onrender.com`),
+set:
 ```ts
 export const environment = {
   production: true,
-  apiBaseUrl: 'https://mysms-messenger-api.fly.dev',   // API app origin, NO trailing /api
+  apiBaseUrl: 'https://mysms-messenger-api.onrender.com',   // API service origin, NO trailing /api
 };
 ```
 - Honors the existing convention (origin only; `MessagesApiService` appends
   `/api/v1/...`) — keeps the QA-M2 double-`/api` fix intact.
-- **Rejected alternative:** Docker `ARG API_BASE_URL` + `sed` into the file at
-  build time. More moving parts and Fly's default `fly deploy` doesn't pass build
-  args cleanly without `--build-arg`; a committed value is simpler and reviewable
-  for a one-shot demo. (If the URL must stay out of git, fall back to the ARG
-  approach — flagged as director's call.)
-- **Ordering dependency:** the API app must be named/created first so its
-  hostname is known before the web image is built. Reflected in CP22.
+- **Rejected alternative:** inject the URL via a build-time environment
+  variable substituted with `sed`/envsubst. More moving parts than a Static
+  Site's build needs; a committed value is simpler and reviewable for a
+  one-shot demo. (If the URL must stay out of git, this is a director call.)
+- **Ordering dependency:** the API service must be named/created first so its
+  hostname is known before the Static Site's build runs. Reflected in CP22.
 
 ### 14.6 CORS / cookies / force_ssl for the real deploy
 
-- **CORS_ORIGINS** → the real web app origin, e.g.
-  `https://mysms-messenger-web.fly.dev`, via `fly secrets set` (or `[env]`) on
-  the **API** app. `cors.rb` splits on comma and already sets
-  `credentials: true`; wildcard is impossible with credentials (unchanged).
-- **CROSS_ORIGIN_COOKIES=true** is **required** now (set in API `[env]`, §14.2):
-  the SPA and API are on different registrable hosts, so the `:msms_owner`
-  cookie must be `SameSite=None; Secure` to round-trip — exactly the switch
-  `.env.example` documents. This depends on HTTPS, which Fly provides.
+- **CORS_ORIGINS** → the real static site origin, e.g.
+  `https://mysms-messenger-web.onrender.com`, set as an `envVars` entry in
+  `render.yaml` (or overridden in the Render dashboard) on the **API**
+  service. `cors.rb` splits on comma and already sets `credentials: true`;
+  wildcard is impossible with credentials (unchanged).
+- **CROSS_ORIGIN_COOKIES=true** is **required** now (set in the API service's
+  `envVars`, §14.2): the SPA and API are on different registrable hosts
+  (different `onrender.com` subdomains), so the `:msms_owner` cookie must be
+  `SameSite=None; Secure` to round-trip — exactly the switch `.env.example`
+  documents. This depends on HTTPS, which Render provides.
 - **Angular `withCredentials: true`** is already set in the API service (§8.3) —
   no change.
 
-- **force_ssl vs the health check — THE FINDING (flagged):**
+- **force_ssl vs the health check — THE FINDING (flagged, still applies on Render):**
   `config.silence_healthcheck_path = "/health"` (`production.rb:17`) is a Rails
   7.1 feature that **only silences the request LOG line** for that path. It does
   **NOT** exempt the path from `config.force_ssl`. These are two different
   mechanisms and are frequently conflated. With `force_ssl = true`, Rails
-  **301-redirects any request it does not consider SSL** to `https://`. Fly's
+  **301-redirects any request it does not consider SSL** to `https://`. Render's
   external traffic arrives with `X-Forwarded-Proto: https` (Rails honors it, so
-  real users are fine), **but Fly's internal `[[http_service.checks]]` hit the
-  machine over plain HTTP and may not carry `X-Forwarded-Proto: https`** — in
+  real users are fine), **but Render's internal health checker may hit the
+  container over plain HTTP and not carry `X-Forwarded-Proto: https`** — in
   which case `GET /health` returns **301, not 200, and the health check fails**,
-  taking the whole deploy down even though the app is healthy. The auth-skip on
-  the health controller does not help here — the redirect happens in middleware
-  before the controller runs.
-  **Fix — exempt `/health` from the SSL redirect** in `production.rb`:
+  taking the whole deploy down even though the app is healthy. Same failure mode
+  Fly had; the fix is provider-agnostic and needs no change for Render. The
+  auth-skip on the health controller does not help here — the redirect happens
+  in middleware before the controller runs.
+  **Fix — exempt `/health` from the SSL redirect** in `production.rb` (already
+  committed, unchanged by the Render switch):
   ```ruby
   config.force_ssl = true
   config.ssl_options = {
@@ -1163,66 +1148,73 @@ export const environment = {
   }
   ```
   This keeps HSTS + redirect for everything else while letting the internal
-  health check succeed over HTTP. (Alternative: configure the Fly check to use
-  TLS, but the `ssl_options` exclude is self-contained and provider-agnostic —
-  preferred.)
+  health check succeed over HTTP.
 
 ### 14.7 MongoDB Atlas setup (runbook — director executes)
 
 1. **Create a free cluster.** Atlas → *Build a Database* → **M0 Free** tier.
-   Pick a cloud/region **close to the Fly `primary_region`** (e.g. AWS
-   `us-east-1` ↔ Fly `iad`) to keep latency low. Name it e.g. `mysms`.
+   Pick a cloud/region **close to the Render `region`** (e.g. AWS `us-west-2`
+   ↔ Render `oregon`) to keep latency low. Name it e.g. `mysms`.
 2. **Create a database user.** *Database Access* → *Add New Database User* →
    auth method **Password**. Username e.g. `mysms_app`, strong generated
    password. Role: **Read and write to any database** (or scope to
    `mysms_production`). Record the password (it goes into `MONGO_URI` only).
 3. **Network access allow-list.** *Network Access* → *Add IP Address* →
-   **`0.0.0.0/0`** (allow from anywhere). **Security tradeoff (flagged):** Fly
-   machines don't have stable egress IPs on the free setup, so pinning specific
-   IPs is impractical for this demo; `0.0.0.0/0` is acceptable **only because**
-   access still requires the DB username+password in the secret `MONGO_URI`.
-   Note this as demo-only — a production hardening step is a dedicated
-   egress IP / PrivateLink + a narrow allow-list.
+   **`0.0.0.0/0`** (allow from anywhere). **Security tradeoff (flagged):**
+   Render's free web service instances don't have stable egress IPs, so
+   pinning specific IPs is impractical for this demo (same constraint Fly
+   had); `0.0.0.0/0` is acceptable **only because** access still requires the
+   DB username+password in the secret `MONGO_URI`. Note this as demo-only —
+   a production hardening step is a dedicated egress IP / PrivateLink + a
+   narrow allow-list.
 4. **Get the connection string.** *Database* → *Connect* → *Drivers* → copy the
    `mongodb+srv://` string. Insert the user's password and append the DB name:
    ```
    mongodb+srv://mysms_app:<PASSWORD>@mysms.xxxxx.mongodb.net/mysms_production?retryWrites=true&w=majority
    ```
    (The `/mysms_production` path segment sets the default database Mongoid uses.)
-5. **Set the secret** on the API app:
-   ```
-   fly secrets set MONGO_URI="mongodb+srv://mysms_app:<PASSWORD>@mysms.xxxxx.mongodb.net/mysms_production?retryWrites=true&w=majority" -a mysms-messenger-api
-   ```
+5. **Set the secret** on the API service — Render dashboard → the
+   `mysms-messenger-api` service → *Environment* → add `MONGO_URI` with the
+   full connection string above (there's no CLI equivalent to `fly secrets
+   set`; Render's `sync: false` env vars are entered directly in the
+   dashboard, or via `render blueprint launch` prompts if using the CLI).
 6. **Create indexes** after first boot (User unique index + Message compound
-   index): `fly ssh console -a mysms-messenger-api -C "bin/rails db:mongoid:create_indexes"`.
+   index): open a shell to the running service from the Render dashboard
+   (*Shell* tab on the service page) and run
+   `bin/rails db:mongoid:create_indexes`.
 
 ### 14.8 Checkpoint plan (continues CP1–CP18)
 
 | CP | Story | Acceptance criteria | Role | Size |
 |----|-------|---------------------|------|------|
-| **CP19** | Backend container + Fly config | `backend/Dockerfile` (multi-stage, build-essential in build stage only, lean final); binds `0.0.0.0` on `${PORT:-8080}`; `backend/fly.toml` with `internal_port=8080`, `[[http_service.checks]]` → `/health`, `[env]` (RAILS_ENV/MESSAGE_REPOSITORY/SMS_PROVIDER/CROSS_ORIGIN_COOKIES/PORT) and documented secrets; `docker build` succeeds locally; `Gemfile.lock` committed | Senior BE | M |
-| **CP20** | Frontend container + nginx + Fly config | `frontend/Dockerfile` (node build → nginx serve of `dist/frontend/browser`); `frontend/nginx.conf` (listen 8080, hashed-asset caching, SPA fallback to `index.html`); `frontend/fly.toml` `internal_port=8080` check `/`; `docker build` succeeds; container serves the SPA locally | Senior FE | M |
-| **CP21** | Prod CORS/cookie/force_ssl fixes | `environment.production.ts` `apiBaseUrl` set to API app origin (no `/api`); `production.rb` adds `config.ssl_options` `/health` redirect exclude (the force_ssl/health finding, §14.6); confirm `CROSS_ORIGIN_COOKIES=true` + `CORS_ORIGINS` wiring; no code path other than config changes | Senior BE + FE | S |
-| **CP22** | Atlas provisioning + live `fly deploy` | Atlas M0 cluster + DB user + `0.0.0.0/0` allow-list + `mongodb+srv://` string; `fly secrets set` SECRET_KEY_BASE/MONGO_URI/CORS_ORIGINS; `fly deploy` both apps (API first so its hostname is known for CP21's build — see §14.5 ordering); `create_indexes`; end-to-end signup→login→send→history over HTTPS across the two origins | Director + Tech Lead | M |
+| **CP19** | Backend container + Render config | `backend/Dockerfile` (multi-stage, build-essential in build stage only, lean final); binds `0.0.0.0` on `${PORT:-8080}`; `render.yaml`'s `mysms-messenger-api` service (`runtime: docker`, `healthCheckPath: /health`, `envVars` for RAILS_ENV/MESSAGE_REPOSITORY/SMS_PROVIDER/CROSS_ORIGIN_COOKIES, `sync: false` secrets documented); `docker build` succeeds locally | Senior BE | M |
+| **CP20** | Frontend Static Site config | `render.yaml`'s `mysms-messenger-web` service (`runtime: static`, `buildCommand: npm ci && npm run build`, `staticPublishPath: dist/frontend/browser`, SPA-fallback rewrite route); `npm run build` succeeds locally and produces `dist/frontend/browser/index.html` | Senior FE | S |
+| **CP21** | Prod CORS/cookie/force_ssl fixes | `environment.production.ts` `apiBaseUrl` set to the API service's `onrender.com` origin (no `/api`); `production.rb`'s `config.ssl_options` `/health` redirect exclude (the force_ssl/health finding, §14.6, unchanged from the Fly design); confirm `CROSS_ORIGIN_COOKIES=true` + `CORS_ORIGINS` wiring; no code path other than config changes | Senior BE + FE | S |
+| **CP22** | Atlas provisioning + live Render deploy | Atlas M0 cluster + DB user + `0.0.0.0/0` allow-list + `mongodb+srv://` string; set `SECRET_KEY_BASE`/`MONGO_URI` in the Render dashboard for the API service; deploy the Blueprint (API service creates first so its hostname is known for CP21's static site build — see §14.5 ordering); `create_indexes`; end-to-end signup→login→send→history over HTTPS across the two origins | Director + Tech Lead | M |
 
 **BLOCKED-ON-DIRECTOR (flagged explicitly):** **CP22 cannot be completed by the
-dev team** — it needs (a) a **Fly.io account + API token** (`fly auth login` /
-`FLY_API_TOKEN`), and (b) the **Atlas cluster + `MONGO_URI`**. CP19–CP21 are
-fully doable now (all artifacts committed, builds verified locally); CP22 is the
-one checkpoint gated on the director supplying credentials. Also director must
-confirm the **final app names** (they feed `CORS_ORIGINS` and the frontend
-`apiBaseUrl`) — a naming decision that must precede CP21's frontend build.
+dev team** — it needs (a) a **Render account** (free, no credit card required
+to create the Web Service/Static Site instances used here — confirmed via
+`render.com/docs/free`), connected to the GitHub repo so it can read
+`render.yaml`, and (b) the **Atlas cluster + `MONGO_URI`**. CP19–CP21 are
+fully doable now (all artifacts committed, builds verified locally); CP22 is
+the one checkpoint gated on the director supplying an account + credentials.
+Also director must confirm the **final service names** (they feed
+`CORS_ORIGINS` and the frontend `apiBaseUrl`) — a naming decision that must
+precede CP21's frontend build.
 
 ### 14.9 Open questions for the director
 
-1. **Final Fly app names + region** — placeholders `mysms-messenger-api` /
-   `mysms-messenger-web` and `iad` used throughout; confirm so `CORS_ORIGINS` and
-   the baked-in `apiBaseUrl` are correct (blocks CP21's frontend build).
+1. **Final Render service names + region** — placeholders `mysms-messenger-api` /
+   `mysms-messenger-web` and `oregon` used throughout; confirm so `CORS_ORIGINS`
+   and the baked-in `apiBaseUrl` are correct (blocks CP21's frontend build).
 2. **`apiBaseUrl` in git?** — recommended committed into
-   `environment.production.ts` (§14.5); confirm OK, or switch to the Docker
-   build-arg approach to keep the URL out of the repo.
+   `environment.production.ts` (§14.5); confirm OK, or a build-time
+   substitution step can be added if the URL must stay out of the repo.
 3. **Atlas allow-list `0.0.0.0/0`** — accepted for this demo (password-gated);
    confirm no requirement for a locked-down egress IP / PrivateLink this pass.
-4. **Cold starts** — `min_machines_running = 0` (free-tier friendly) means the
-   first request after idle is slow. Acceptable for a live demo, or pin ≥1?
-5. **Fly credentials / Atlas URI** — needed to execute CP22 (see BLOCKED note).
+4. **Cold starts** — the free Web Service tier spins down after 15 minutes
+   idle (§14 intro), so the first request after idle takes ~1 minute. This is
+   very likely acceptable for a take-home demo — cheaper and simpler than
+   Fly's paid always-on option — but flagging it explicitly as a trade-off.
+5. **Render account / Atlas URI** — needed to execute CP22 (see BLOCKED note).

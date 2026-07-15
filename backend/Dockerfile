@@ -43,6 +43,7 @@ COPY --from=build /app /app
 RUN chown -R app:app /app
 USER app
 EXPOSE 8080
-# Bind 0.0.0.0 (NOT localhost) so Fly's proxy can reach the process; honor the
-# PORT Fly injects, defaulting to 8080 to match fly.toml internal_port (§14.2).
+# Bind 0.0.0.0 (NOT localhost) so the host's proxy can reach the process;
+# honor the PORT the platform injects (Render sets this automatically),
+# defaulting to 8080 to match render.yaml (§14.2).
 CMD ["sh", "-c", "bin/rails server -b 0.0.0.0 -p ${PORT:-8080}"]

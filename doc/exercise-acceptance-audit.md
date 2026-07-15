@@ -244,41 +244,52 @@ held up in practice with zero schema changes.
 
 **Verdict: DEPLOY-READY, blocked only on director-supplied credentials — not yet live.**
 
-- Target: **Fly.io** for both `backend/` (Rails API) and `frontend/`
-  (Angular, built and served via nginx) as two separate Fly apps, genuinely
-  cross-origin (different subdomains) — plus **MongoDB Atlas free tier** as
-  the datastore.
+- Target: **Render** for both `backend/` (Rails API, Docker-runtime Web
+  Service) and `frontend/` (Angular, a free Static Site — no container
+  needed), genuinely cross-origin (different `onrender.com` subdomains) —
+  plus **MongoDB Atlas free tier** as the datastore. **Switched from an
+  earlier Fly.io plan (2026-07-15)**: Fly.io now requires a credit card with
+  no meaningful free tier; Render's free Web Service + Static Site instances
+  are genuinely $0/month with no card required (confirmed via
+  `render.com/docs/free`) — trade-off is the free web service spins down
+  after 15 min idle.
 - `backend/Dockerfile` (multi-stage: build-essential/native-ext toolchain in
   the build stage only, lean non-root final stage, binds `0.0.0.0`, honors
-  `$PORT`) + `backend/fly.toml` (health check on `/health`, `[env]`/secrets
-  split, a comment block listing the exact `fly secrets set` commands
-  needed).
-- `frontend/Dockerfile` (node build → nginx static serve) + `frontend/nginx.conf`
-  + `frontend/fly.toml`.
-- Real bugs found and fixed during design/review before any deploy attempt:
-  `config.force_ssl` would have 301-redirected Fly's plain-HTTP internal
-  health check (fixed via an explicit `/health` exclude); `CORS_ORIGINS`
-  had a silent localhost fallback that would have deployed clean while
-  quietly rejecting every real cross-origin request (now fails loudly at
-  boot in production, matching `SECRET_KEY_BASE`/`MONGO_URI`); no
-  `Gemfile.lock` is committed (this sandbox never had rubygems.org access
-  to generate one), so the Dockerfile was adjusted to resolve/install gems
-  fresh at build time rather than assume a frozen lockfile exists.
-- `CROSS_ORIGIN_COOKIES=true` is already wired into `fly.toml` — this is
+  `$PORT`) + repo-root `render.yaml` (Blueprint declaring both services;
+  health check on `/health` for the API service, `envVars`/`sync: false`
+  secrets split).
+- Frontend needs no Dockerfile/nginx at all under Render — `render.yaml`'s
+  static-site service builds and publishes `dist/frontend/browser` directly;
+  the old `frontend/Dockerfile`/`nginx.conf`/`fly.toml` have been removed.
+- Real bugs found and fixed during design/review before any deploy attempt
+  (all still apply under Render, same failure modes with a different
+  provider name): `config.force_ssl` would have 301-redirected the
+  platform's plain-HTTP internal health check (fixed via an explicit
+  `/health` exclude); `CORS_ORIGINS` had a silent localhost fallback that
+  would have deployed clean while quietly rejecting every real cross-origin
+  request (now fails loudly at boot in production, matching
+  `SECRET_KEY_BASE`/`MONGO_URI`); no `Gemfile.lock` is committed (this
+  sandbox never had rubygems.org access to generate one), so the Dockerfile
+  was adjusted to resolve/install gems fresh at build time rather than
+  assume a frozen lockfile exists.
+- `CROSS_ORIGIN_COOKIES=true` is already wired into `render.yaml` — this is
   the exact scenario that flag was built for during Bonus 1 and never
   activated until now.
 - Disclosed, accepted caveats: Rack::Attack's rate limiting uses a
-  per-process in-memory store, fine at the planned single Fly machine but
-  would need a shared store before scaling past one; MongoDB Atlas network
-  access is planned as `0.0.0.0/0` for demo simplicity (documented
-  trade-off, not an oversight).
+  per-process in-memory store, fine at a single Render instance but would
+  need a shared store before scaling past one; MongoDB Atlas network access
+  is planned as `0.0.0.0/0` for demo simplicity (documented trade-off, not
+  an oversight); the free web service spins down after 15 min idle, so the
+  first request after idle takes ~1 min (acceptable for a take-home demo).
 - **What's blocking an actual live URL**: this cannot be deployed without
-  credentials only the director can provide — a Fly.io API token, a
-  MongoDB Atlas connection URI (from a free-tier cluster the director
-  creates), and confirmation of the real app names/region (the repo
-  currently has clearly-labeled placeholders, e.g. `mysms-messenger-api`).
-  Once supplied, deployment is the one remaining checkpoint (tech-design.md
-  §14, CP22).
+  the director's own accounts — a **Render account** (free, no credit card
+  required for the instance types used here), a MongoDB Atlas connection
+  URI (from a free-tier cluster the director creates), and confirmation of
+  the real service names/region (the repo currently has clearly-labeled
+  placeholders, e.g. `mysms-messenger-api`). Once supplied, deployment is
+  the one remaining checkpoint (tech-design.md §14, CP22) — and notably a
+  much lighter blocker than the earlier Fly.io plan, since it no longer
+  requires a credit card.
 - Twilio stays on the fake gateway for the live demo per the director's
   choice — send/list works end-to-end without real SMS delivery.
 
@@ -338,6 +349,6 @@ held up in practice with zero schema changes.
 | 7 | Session-cookie scoping | MET |
 | 8 | Wireframe fidelity | MET |
 | Bonus 1 | Auth | IMPLEMENTED — has_secure_password, signup/login/logout/me, zero-migration owner_id reuse |
-| Bonus 2 | Live deploy | DEPLOY-READY (Fly.io + Atlas configs built, reviewed, fixed) — blocked on director's Fly/Atlas credentials, not yet live |
+| Bonus 2 | Live deploy | DEPLOY-READY (Render + Atlas configs built, reviewed, fixed) — blocked on director's Render account/Atlas credentials, not yet live |
 | Bonus 3 | Webhooks | OUT OF SCOPE (client-approved), not implemented, schema pre-reserves fields for it |
 | — | GitHub push + live demo link | Local repo ready, remote set, push not yet executed (no creds in sandbox); no live demo |

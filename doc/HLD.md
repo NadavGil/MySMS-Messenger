@@ -71,15 +71,19 @@ Rails** JSON API, a **MongoDB** datastore, and an outbound integration with
 - Outbound SMS via a swappable gateway abstraction (stub now, Twilio later).
 - Local MongoDB via `docker-compose` (development); **MongoDB Atlas free tier**
   as the managed datastore for the live deployment.
-- **Live cloud deployment** (Bonus 2): the app is deployed to **Fly.io** as two
-  separate apps (Rails API + Angular static frontend) backed by MongoDB Atlas,
-  producing a fully functional public demo URL (see §7.5).
+- **Live cloud deployment** (Bonus 2): the app is deployed to **Render** as two
+  separate services (Rails API web service + Angular static site) backed by
+  MongoDB Atlas, producing a fully functional public demo URL (see §7.5).
+  (**Switched from an earlier Fly.io plan on 2026-07-15** — Fly.io now
+  requires a credit card and has no meaningful free tier; Render's free Web
+  Service and Static Site instances are genuinely $0/month, no card
+  required.)
 
 ### Explicitly deferred (intentional non-goals for this pass)
 
 | # | Bonus feature | Deferred? | Status / notes |
 |---|---|---|---|
-| **Bonus 2** | Live cloud deployment | **No — now in scope** | Deployed to **Fly.io** (API + frontend as two apps) with **MongoDB Atlas** as datastore; enabled by the **12-factor / config-driven** design (§7). See §7.5 and §8. |
+| **Bonus 2** | Live cloud deployment | **No — now in scope** | Deployed to **Render** (API web service + static-site frontend, two services) with **MongoDB Atlas** as datastore; enabled by the **12-factor / config-driven** design (§7). See §7.5 and §8. |
 | **Bonus 3** | Twilio delivery-status webhooks | Yes (only remaining deferred bonus) | The **`status` field placeholder** on the Message entity (§5) + the SMS Gateway seam (§4.4) that can later carry a callback URL and an inbound webhook controller. |
 
 (**Bonus 1 — user authentication — and Bonus 2 — live cloud deployment — are no
@@ -314,13 +318,14 @@ endpoints and two message endpoints:
   `Secure` + appropriate `SameSite`.
 - **CORS** restricted to the known SPA origin(s) via the `CORS_ORIGINS` config
   variable, which in the live deployment **must** be set to the real deployed
-  frontend origin (the Fly.io web app URL) — not `localhost` — via platform
+  frontend origin (the Render static site URL) — not `localhost` — via platform
   config.
 - Server-side input validation (phone format, ≤250 chars, username/password
   rules) — client validation is UX only.
 - Secrets (`SECRET_KEY_BASE`, `MONGO_URI`, `CROSS_ORIGIN_COOKIES`, and any Twilio
   credentials) are **never committed and never baked into a Docker image layer**;
-  they are supplied via the hosting platform's secret store (Fly.io secrets).
+  they are supplied via the hosting platform's secret store (Render dashboard
+  environment variables, `sync: false` in `render.yaml`).
 - Scoping by `owner_id` (now a `User` id) prevents one user from reading
   another user's messages.
 
@@ -337,32 +342,42 @@ endpoints and two message endpoints:
 
 ### 7.5 Production deployment topology (Bonus 2)
 
-The live demo runs on **Fly.io** with **MongoDB Atlas** as the datastore. Three
-independently managed pieces:
+The live demo runs on **Render** with **MongoDB Atlas** as the datastore.
+(**Switched from an earlier Fly.io plan on 2026-07-15**: Fly.io requires a
+credit card on every new org with no meaningful free tier; Render's free Web
+Service and Static Site instances are genuinely $0/month with no card
+required — see `doc/tech-design.md` §14 intro for the full rationale and
+trade-offs, notably that the free web service spins down after 15 min idle.)
+Three independently managed pieces:
 
-- **Rails API app** — one Fly.io app running the API-only Rails image
-  (e.g. `mysms-api.fly.dev`).
-- **Angular frontend app** — a separate Fly.io app serving the static SPA build
-  (e.g. `mysms-web.fly.dev`). API and frontend are deployed as **separate Fly
-  apps** because they are different runtimes / build outputs.
+- **Rails API service** — one Render **Web Service** (Docker runtime) running
+  the API-only Rails image (e.g. `mysms-messenger-api.onrender.com`).
+- **Angular frontend** — a Render **Static Site** serving the compiled SPA
+  build directly from Render's CDN (e.g. `mysms-messenger-web.onrender.com`)
+  — no container/nginx needed for the frontend at all. API and frontend are
+  deployed as **separate services** because they are different runtimes /
+  build outputs; both are declared together in one `render.yaml` Blueprint.
 - **MongoDB Atlas (free tier)** — a managed database, **decoupled from app
   hosting**; the API reaches it via `MONGO_URI` (§7.2). Local `docker-compose`
   Mongo remains for development only.
 
-**Genuine cross-origin deployment.** The API and frontend almost certainly live
-on **different subdomains** (`mysms-api.fly.dev` vs `mysms-web.fly.dev`), so the
-SPA-to-API auth cookie is now a **real cross-site cookie**. This is *exactly* the
-scenario `CurrentIdentity`'s existing **`CROSS_ORIGIN_COOKIES`** env flag
-(which sets the auth cookie to `SameSite=None; Secure`) was built for in the
-earlier pass and **never activated until now** — flipping it on in production is
-the real payoff of that earlier design decision, **not new design debt**.
+**Genuine cross-origin deployment.** The API and frontend live on **different
+`onrender.com` subdomains**, so the SPA-to-API auth cookie is now a **real
+cross-site cookie**. This is *exactly* the scenario `CurrentIdentity`'s
+existing **`CROSS_ORIGIN_COOKIES`** env flag (which sets the auth cookie to
+`SameSite=None; Secure`) was built for in the earlier pass and **never
+activated until now** — flipping it on in production is the real payoff of
+that earlier design decision, **not new design debt**. This holds regardless
+of which hosting provider is used.
 
-**HTTPS is mandatory** in this topology. Fly.io terminates TLS by default, and
-`config.force_ssl = true` is already set in `production.rb`, so all traffic is
-HTTPS end-to-end — which is also a precondition for the `Secure` cookie above.
+**HTTPS is mandatory** in this topology. Render terminates TLS by default
+(same as Fly did), and `config.force_ssl = true` is already set in
+`production.rb`, so all traffic is HTTPS end-to-end — which is also a
+precondition for the `Secure` cookie above.
 
 **Secrets** (`SECRET_KEY_BASE`, `MONGO_URI`, `CROSS_ORIGIN_COOKIES`, plus Twilio
-credentials if/when supplied) are set through the Fly.io secret store — never
+credentials if/when supplied) are set through the Render dashboard's
+environment variables (`sync: false` entries in `render.yaml`) — never
 committed to the repo, never baked into a Docker image layer (§7.3).
 
 **SMS stays on the fake gateway in production.** No real Twilio credentials have
@@ -372,7 +387,7 @@ already **defaults to the fake gateway** and is **config-only** to flip later
 end-to-end without sending real SMS.
 
 **CORS** (`CORS_ORIGINS`) is set on the API to the deployed frontend origin
-(`mysms-web.fly.dev`), not `localhost` (§7.3).
+(`mysms-messenger-web.onrender.com`), not `localhost` (§7.3).
 
 ---
 
@@ -384,15 +399,16 @@ end-to-end without sending real SMS.
 
 ### Bonus 2 — Live cloud deployment (now in scope, see §7.5)
 
-- Delivered via **Fly.io** (Rails API + Angular static frontend as two separate
-  apps) with **MongoDB Atlas (free tier)** as the datastore — full topology in
-  §7.5.
+- Delivered via **Render** (Rails API web service + Angular static site as two
+  separate services, declared in one `render.yaml` Blueprint) with **MongoDB
+  Atlas (free tier)** as the datastore — full topology in §7.5.
 - Because everything is config-driven (§7.2), deploying is providing production
   configuration (Mongo URI → Atlas, secure/cross-origin cookie flags via
   `CROSS_ORIGIN_COOKIES`, `CORS_ORIGINS` → the frontend origin, `SECRET_KEY_BASE`)
   — **not code changes**. `SMS_PROVIDER` keeps its fake default for the demo.
-- Dockerfiles, `fly.toml`, and CI/CD wiring are the Tech Lead's / dev team's
-  deliverables; this HLD fixes the architecture and configuration surface only.
+- The backend Dockerfile, `render.yaml`, and CI/CD wiring are the Tech Lead's /
+  dev team's deliverables; this HLD fixes the architecture and configuration
+  surface only.
 
 ### Bonus 3 — Twilio delivery-status webhooks (only remaining deferred bonus)
 
@@ -441,7 +457,8 @@ end-to-end without sending real SMS.
   anywhere the sandbox that built it could not reach** — `rubygems.org` was
   blocked in that build environment throughout — so some environment-specific
   surprises (dependency fetch, image build, Atlas connectivity, cookie/CORS
-  behavior across the two Fly apps) are possible on the first real deploy. Same
+  behavior across the two Render services) are possible on the first real
+  deploy. Same
   pattern as the earlier live local run; mitigated by the config-driven design
   and by treating the first deploy as a shakeout.
 - **Pre-existing anonymous messages** created before this change carry an

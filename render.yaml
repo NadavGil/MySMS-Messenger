@@ -1,0 +1,62 @@
+# Render Blueprint (Infrastructure as Code) — replaces the earlier Fly.io
+# fly.toml configs (tech-design.md §14). See doc/tech-design.md §14 for the
+# full rationale on why Render was chosen: genuinely free web service +
+# static site instances, no credit card required to create them (unlike
+# Fly.io, which requires a card on file for every org as of mid-2026).
+#
+# Deploy via the Render Dashboard: "New" -> "Blueprint" -> point at this repo
+# -> Render reads this file and provisions both services below. MongoDB
+# itself is NOT provisioned here (Render doesn't offer managed MongoDB) —
+# continue to use MongoDB Atlas's free M0 tier as an external datastore,
+# unchanged from the original plan (see §14.7 runbook).
+#
+# PLACEHOLDER service names below (mysms-messenger-api / mysms-messenger-web)
+# — Render assigns the real *.onrender.com hostname from whatever `name` you
+# set here. Update CORS_ORIGINS and frontend/src/environments/
+# environment.production.ts's apiBaseUrl to match your actual hostnames.
+
+services:
+  - type: web
+    name: mysms-messenger-api
+    runtime: docker
+    rootDir: backend
+    dockerfilePath: ./Dockerfile
+    plan: free
+    region: oregon               # PLACEHOLDER — pick the region closest to your Atlas cluster
+    healthCheckPath: /health
+    autoDeploy: true
+    envVars:
+      - key: RAILS_ENV
+        value: production
+      - key: MESSAGE_REPOSITORY
+        value: mongo
+      - key: SMS_PROVIDER
+        value: fake               # no Twilio creds this pass
+      - key: CROSS_ORIGIN_COOKIES
+        value: "true"             # API and static site are on different onrender.com subdomains
+      - key: RAILS_LOG_TO_STDOUT
+        value: "true"
+      - key: CORS_ORIGINS
+        value: https://mysms-messenger-web.onrender.com   # PLACEHOLDER — must equal the static site's real URL below
+      - key: SECRET_KEY_BASE
+        sync: false               # set manually in the Render dashboard: `bin/rails secret`
+      - key: MONGO_URI
+        sync: false               # set manually: your Atlas mongodb+srv://... connection string
+      # Render injects PORT automatically; the Dockerfile already honors
+      # ${PORT:-8080} (backend/Dockerfile), so no PORT var needed here.
+
+  - type: web
+    name: mysms-messenger-web
+    runtime: static
+    rootDir: frontend
+    buildCommand: npm ci && npm run build
+    staticPublishPath: dist/frontend/browser
+    plan: free
+    autoDeploy: true
+    routes:
+      # SPA fallback: any unknown path serves index.html (same behavior the
+      # old nginx.conf provided; kept for future Angular Router use, even
+      # though this app doesn't route between pages today).
+      - type: rewrite
+        source: /*
+        destination: /index.html
