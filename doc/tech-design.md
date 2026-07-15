@@ -614,3 +614,280 @@ CORS_ORIGINS=http://localhost:4200
 - **History refresh after send**: store `refresh()` re-fetches (server is source
   of truth) rather than optimistic append — simplest correct behavior.
 - **Rate limiting**: out of scope until real Twilio is live (Bonus).
+
+---
+
+## 13. Bonus 1: Authentication (`has_secure_password`)
+
+> Implements HLD §8 Bonus 1. Re-points the existing `CurrentIdentity` seam
+> (§2.7) from a self-minted anonymous UUID to a **real authenticated `User`
+> id**. **Decisions locked upstream (do not re-litigate):** use ActiveModel's
+> built-in `has_secure_password` (bcrypt), NOT Devise; keep delivering identity
+> via the SAME signed HttpOnly `:msms_owner` cookie already built and fought
+> through for CORS/SameSite — only *what the cookie identifies* changes. No JWT,
+> no token gem.
+
+### 13.1 What does NOT change (promises kept)
+
+- **`MessageDocument#owner_id` / `Domain::Message#owner_id`: ZERO schema
+  changes.** Same `String` field, same `index({ owner_id: 1, created_at: -1 })`,
+  same repository/service/serialize code. It is simply now populated with a real
+  `User` id (`user.id.to_s`) instead of `SecureRandom.uuid`. `SendMessageService`,
+  `ListMessagesService`, both repositories, and `MessagesController` need **no
+  edits** — this is exactly the seam HLD §4.5/§8 promised.
+- **Cookie infrastructure unchanged.** The `:msms_owner` signed HttpOnly cookie
+  and *all* of `CurrentIdentity`'s existing `same_site_policy` / `secure_cookie?`
+  / `cross_origin_cookies?` (`CROSS_ORIGIN_COOKIES` ENV) logic **carry over
+  verbatim**. Same CORS `credentials: true`, same Angular `withCredentials: true`.
+- **Container / IoC, gateways, DAL abstraction**: untouched.
+
+### 13.2 `User` model (`app/models/user.rb`)
+
+`app/models/` is a **default (unnamespaced) Zeitwerk autoload root** (unlike
+`app/domain|repositories|gateways|services`, which §2.4/`application.rb`
+re-namespace). So `app/models/user.rb` autoloads as top-level `::User` — the
+exact same pattern as `MessageDocument`. No `application.rb` autoload change.
+
+```ruby
+class User
+  include Mongoid::Document
+  include Mongoid::Timestamps
+  # If `has_secure_password` raises NoMethodError at boot, add explicitly:
+  #   include ActiveModel::SecurePassword
+  # (ActiveRecord auto-includes it; Mongoid versions vary. Confirm at CP13.)
+  has_secure_password
+
+  field :username,        type: String
+  field :password_digest, type: String   # required by has_secure_password
+
+  # Case policy (MY CALL): usernames are case-INSENSITIVE for identity but
+  # stored in their normalized lowercase form. Normalize before validation so
+  # both the unique index and login lookups are trivial exact matches.
+  before_validation { self.username = username.downcase.strip if username.is_a?(String) }
+
+  validates :username, presence: true,
+                       uniqueness: true,      # app-level guard (racy; index is authoritative)
+                       format: { with: /\A[a-z0-9_]{3,30}\z/,
+                                 message: "must be 3-30 chars: lowercase letters, digits, underscore" }
+  # has_secure_password already validates password presence on create and
+  # enforces bcrypt's 72-byte max. Add a sane minimum:
+  validates :password, length: { minimum: 8 }, allow_nil: true
+
+  # Authoritative uniqueness guard (uniqueness validation alone is racy).
+  index({ username: 1 }, { unique: true })
+end
+```
+
+- **Gemfile**: bcrypt is **NOT currently present** (confirmed — Gemfile has
+  rails/mongoid/twilio-ruby/rack-cors/rack-attack only). Add:
+  `gem "bcrypt", "~> 3.1.20"`. Then `bundle install`.
+- Create the unique index on deploy: `bin/rails db:mongoid:create_indexes`.
+
+### 13.3 `CurrentIdentity` rework (`app/controllers/concerns/current_identity.rb`)
+
+Replace "mint a UUID on first contact" with "require a real, still-existing
+authenticated user; else 401". Add reusable `sign_in`/`sign_out` so cookie
+writing stays in one place (reusing the untouched flag helpers).
+
+```ruby
+module CurrentIdentity
+  extend ActiveSupport::Concern
+  included { before_action :resolve_current_identity }
+
+  private
+  COOKIE = :msms_owner
+
+  # Now REQUIRES a valid user id in the signed cookie. No silent identity minting.
+  def resolve_current_identity
+    user_id = cookies.signed[COOKIE]
+    @current_user = User.where(id: user_id).first if user_id.present?
+    return if @current_user   # authenticated
+
+    render json: { errors: { base: ["Not authenticated"] } }, status: :unauthorized
+  end
+
+  attr_reader :current_user
+  # Backwards-compatible alias: MessagesController still calls `current_identity`.
+  def current_identity = @current_user&.id&.to_s
+
+  # Called by AuthController on signup/login. Cookie contents = the User id
+  # STRING (nothing else). All flag logic below is UNCHANGED from §2.7.
+  def sign_in(user)
+    @current_user = user
+    cookies.signed[COOKIE] = {
+      value: user.id.to_s, httponly: true,
+      same_site: same_site_policy, secure: secure_cookie?,
+      expires: 1.year.from_now
+    }
+  end
+
+  def sign_out
+    cookies.delete(COOKIE, same_site: same_site_policy, secure: secure_cookie?)
+    @current_user = nil
+  end
+
+  # same_site_policy / secure_cookie? / cross_origin_cookies? : UNCHANGED (§2.7).
+end
+```
+
+- `MessagesController` keeps calling `current_identity` (now the real user id
+  string) — **no controller edit needed**; it just starts returning 401 for
+  unauthenticated callers automatically (before_action halts).
+- If the old anonymous UUID cookie is presented, `User.where(id: uuid)` misses →
+  401 → forces (re)login. Correct and intended (see §13.9).
+
+### 13.4 `AuthController` (`app/controllers/api/v1/auth_controller.rb`)
+
+Inherits `ApplicationController` (so it gets `ActionController::Cookies`,
+`wrap_parameters false`, `rescue_from RepositoryError`, and `CurrentIdentity`).
+**Skip the auth gate for the endpoints that must work while unauthenticated:**
+
+```ruby
+module Api
+  module V1
+    class AuthController < ApplicationController
+      # signup/login run BEFORE auth exists; logout is idempotent (never 401).
+      # `me` intentionally does NOT skip — the before_action's 401 IS its
+      # "not logged in" answer.
+      skip_before_action :resolve_current_identity, only: %i[signup login logout]
+
+      # POST /api/v1/auth/signup
+      def signup
+        user = User.new(username: params[:username], password: params[:password])
+        if user.save
+          sign_in(user)
+          render json: user_json(user), status: :created
+        else
+          render json: { errors: user.errors.messages }, status: :unprocessable_entity
+        end
+      end
+
+      # POST /api/v1/auth/login
+      def login
+        user = User.where(username: params[:username].to_s.downcase.strip).first
+        # user&.authenticate returns false for bad password / when user is nil.
+        # Generic message on BOTH paths -> no username enumeration.
+        if user&.authenticate(params[:password].to_s)
+          sign_in(user)
+          render json: user_json(user), status: :ok
+        else
+          render json: { errors: { base: ["Invalid username or password"] } },
+                 status: :unauthorized
+        end
+      end
+
+      # DELETE /api/v1/auth/logout
+      def logout
+        sign_out
+        head :no_content
+      end
+
+      # GET /api/v1/auth/me  (before_action already 401s if unauthenticated)
+      def me
+        render json: user_json(current_user), status: :ok
+      end
+
+      private
+      # NEVER expose password_digest.
+      def user_json(user) = { id: user.id.to_s, username: user.username }
+    end
+  end
+end
+```
+
+> **Enumeration/timing note:** `authenticate` runs a bcrypt compare only when the
+> user exists, so a non-existent username returns faster. For this pre-launch app
+> that timing delta is an accepted low risk; the rack-attack throttle (§13.6) is
+> the primary brute-force control. If tightened later, do a dummy
+> `BCrypt::Password.create` compare on the miss path to equalize timing.
+
+### 13.5 Routes (`config/routes.rb` additions)
+
+Add inside the existing `namespace :api / namespace :v1` block, alongside
+`resources :messages`:
+
+```ruby
+post   "auth/signup", to: "auth#signup"
+post   "auth/login",  to: "auth#login"
+delete "auth/logout", to: "auth#logout"
+get    "auth/me",     to: "auth#me"
+```
+
+**REQUIRED CORS CHANGE (`config/initializers/cors.rb`):** logout is `DELETE`,
+which the current `methods: [:get, :post, :options]` does NOT allow. Change to
+`methods: [:get, :post, :delete, :options]`. (Flagged — easy to miss.)
+
+### 13.6 Rate limiting (`config/initializers/rack_attack.rb`)
+
+Extend the existing `class Rack::Attack` (same `unless Rails.env.test? || ...`
+guard, same JSON `throttled_responder`) with a login throttle:
+
+```ruby
+# Brute-force protection for POST /api/v1/auth/login.
+throttle("auth/login/ip", limit: 5, period: 60) do |req|
+  req.ip if req.post? && req.path == "/api/v1/auth/login"
+end
+```
+
+- **Key = IP** (MY CALL): 5 attempts / 60s per IP. Simple and robust. Keying by
+  `IP + attempted username` is attractive but the JSON body isn't parsed at
+  middleware time — reading it requires `req.body.read` + `req.body.rewind`,
+  which is fragile with the JSON parser downstream. IP-only is the pragmatic,
+  correct-by-default choice; add the username discriminator later only if shared
+  NAT false-positives are observed. Optionally add a slower `limit: 30,
+  period: 3600` second bucket. (Signup can reuse the same pattern later — see
+  §13.9.)
+
+### 13.7 API contract (new endpoints + new 401 shape)
+
+**`POST /api/v1/auth/signup`** — req `{ "username": "alice", "password": "hunter2secret" }`
+→ `201` `{ "id": "664f…", "username": "alice" }`; `422`
+`{ "errors": { "username": ["is already taken"], "password": ["is too short (minimum is 8 characters)"] } }`.
+
+**`POST /api/v1/auth/login`** — req `{ "username": "alice", "password": "hunter2secret" }`
+→ `200` `{ "id": "664f…", "username": "alice" }`; `401`
+`{ "errors": { "base": ["Invalid username or password"] } }`; `429` throttled
+(existing responder shape).
+
+**`DELETE /api/v1/auth/logout`** — → `204 No Content`, clears cookie.
+
+**`GET /api/v1/auth/me`** — → `200` `{ "id": "664f…", "username": "alice" }`;
+`401` `{ "errors": { "base": ["Not authenticated"] } }`.
+
+**New 401 on existing message endpoints:** `POST`/`GET /api/v1/messages` now
+return `401 { "errors": { "base": ["Not authenticated"] } }` when no valid
+identity cookie is present (previously they silently minted one). Frontend must
+treat 401 as "redirect to login".
+
+### 13.8 Checkpoint plan (continues CP1–CP12)
+
+| CP | Story | Acceptance criteria | Role | Size |
+|----|-------|---------------------|------|------|
+| **CP13** | `User` model + bcrypt | `gem "bcrypt"` added & `bundle install` green; `User` (Mongoid, `has_secure_password`, normalized-lowercase username, format/length/uniqueness validations, unique index); model spec: digest set not plaintext, `authenticate` works, dup username rejected | Senior BE | S |
+| **CP14** | `AuthController` signup/login/logout/me + routes | 4 routes; signup creates+signs in (201, no `password_digest`); login sets cookie / 401 generic on bad creds; logout 204 clears cookie; me 200/401; `skip_before_action` correct; CORS `:delete` added; request spec covers all + enumeration-safe 401 | Senior BE | M |
+| **CP15** | `CurrentIdentity` rework → require auth | No more UUID minting; valid cookie → resolves real `User`; absent/invalid/stale → 401 `{errors:{base:["Not authenticated"]}}`; `sign_in`/`sign_out` reuse unchanged flag helpers; request spec proves `/api/v1/messages` 401s unauthenticated and scopes to `user.id` when authed; **owner_id path unchanged** | Senior BE | M |
+| **CP16** | rack-attack login throttle | 6th login in 60s → 429 (existing JSON shape); disabled in test / via `RACK_ATTACK_DISABLED`; spec toggles guard | Junior BE | S |
+| **CP17** | Frontend login/signup/logout UI + auth guard | Standalone `AuthComponent` (login+signup forms), `AuthService` (`withCredentials`) calling the 4 endpoints; `me` checked on app load to set auth state (HttpOnly cookie unreadable in JS); logged-out users see auth screen, logged-in see messenger; logout button; Karma specs via `HttpTestingController` | Senior FE | M |
+| **CP18** | Frontend 401 wiring in API/store | `MessagesApiService`/store treat 401 as "not authenticated" → clear auth state + show login (not a generic error toast); HTTP interceptor or per-call handling; spec asserts 401 → login redirect | Senior FE | M |
+
+Parallelization: CP13 first (blocks CP14/CP15). CP14+CP15 pair on backend; CP16
+(junior) alongside. Frontend CP17→CP18 runs parallel once the §13.7 contract is
+agreed. Integrate last.
+
+### 13.9 Open questions for the director
+
+1. **Orphaned pre-auth messages.** Messages created under old anonymous UUID
+   `owner_id`s become inaccessible once identity requires a real `User` (no user
+   has a UUID id). **Recommended accepted one-time consideration for a
+   pre-launch app** — no migration; not a blocker. Confirm we don't need a
+   backfill/claim flow.
+2. **Signup rate limiting / open registration.** Registration is currently open
+   and unthrottled. Add a signup throttle and/or invite-gating? (Cheap to add via
+   the §13.6 pattern.)
+3. **Username case policy** — confirm case-insensitive + lowercase-normalized is
+   acceptable UX (display name is always lowercase).
+4. **Session lifetime** — 1-year cookie (inherited). Want shorter expiry / idle
+   timeout / server-side revocation? (Current signed cookie can't be revoked
+   server-side short of rotating `secret_key_base`.)
+5. **Password policy** — 8-char minimum only. Any complexity/breach-list
+   requirements? (Recommend not over-engineering pre-launch.)
