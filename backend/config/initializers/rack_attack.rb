@@ -32,6 +32,20 @@ class Rack::Attack
     throttle("auth/login/ip", limit: 5, period: 60) do |req|
       req.ip if req.post? && req.path == "/api/v1/auth/login"
     end
+
+    # qa-security-review-bonus1-auth.md M2/M3: signup was completely
+    # unthrottled, and its 422 "username already taken" response is a clean,
+    # unbounded username-enumeration oracle (cheaper/more precise than the
+    # login-timing side-channel M1 addresses) - also a plain account-creation
+    # abuse vector (spam accounts / Mongo write cost) on its own. Keyed by IP
+    # (same reasoning as auth/login/ip: body isn't parsed at middleware
+    # time). Limit is looser than login (10 vs 5) since signup is a
+    # legitimate, if infrequent, one-time action per real user and false
+    # positives here are more costly (blocks a brand-new user from ever
+    # joining) than on login (where a real user can just retry a password).
+    throttle("auth/signup/ip", limit: 10, period: 60) do |req|
+      req.ip if req.post? && req.path == "/api/v1/auth/signup"
+    end
   end
 
   def self.owner_id_from_signed_cookie(req)
