@@ -21,7 +21,6 @@ services:
     runtime: docker
     rootDir: backend
     dockerfilePath: ./Dockerfile
-    plan: free
     region: oregon               # PLACEHOLDER — pick the region closest to your Atlas cluster
     healthCheckPath: /health
     autoDeploy: true
@@ -51,7 +50,6 @@ services:
     rootDir: frontend
     buildCommand: npm ci && npm run build
     staticPublishPath: dist/frontend/browser
-    plan: free
     autoDeploy: true
     routes:
       # SPA fallback: any unknown path serves index.html (same behavior the
