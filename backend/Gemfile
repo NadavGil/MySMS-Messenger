@@ -27,6 +27,10 @@ gem "rack-cors", "~> 2.0"
 # self-issued signed cookie, so an unthrottled endpoint is an open wallet.
 gem "rack-attack"
 
+# Password hashing for Bonus 1 authentication (has_secure_password,
+# app/models/user.rb, tech-design.md §13.2).
+gem "bcrypt", "~> 3.1"
+
 group :development, :test do
   gem "rspec-rails", "~> 6.1"
   gem "dotenv-rails"
