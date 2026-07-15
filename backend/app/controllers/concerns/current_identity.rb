@@ -1,10 +1,8 @@
-require "securerandom"
-
-# Session/identity concern (tech-design.md §2.7, HLD §4.5). Answers "who
-# owns this request?" via a signed, HttpOnly cookie — a stable per-browser
-# identifier issued on first contact and read thereafter. No login in this
-# pass; this is the seam Bonus 1 (auth) later re-points to a real User id
-# without touching Message storage/scoping.
+# Session/identity concern (tech-design.md §2.7, §13.3, HLD §4.5). Answers
+# "who owns this request?" via a signed, HttpOnly cookie. Bonus 1 (auth)
+# re-points this from a self-minted anonymous UUID to a real, authenticated
+# User id — the cookie infrastructure (same_site/secure/cross-origin policy)
+# carries over verbatim; only WHAT gets validated/stored changed.
 module CurrentIdentity
   extend ActiveSupport::Concern
 
@@ -16,46 +14,47 @@ module CurrentIdentity
 
   COOKIE = :msms_owner
 
+  # REQUIRES a valid, still-existing authenticated user id in the signed
+  # cookie. No silent identity minting (that was the pre-auth behavior; see
+  # git history on this file for the superseded implementation and its
+  # documented race-condition caveat, now moot since login is a synchronous,
+  # explicit step rather than "first contact").
   def resolve_current_identity
-    @current_identity = cookies.signed[COOKIE]
+    user_id = cookies.signed[COOKIE]
+    @current_user = User.where(id: user_id).first if user_id.present?
+    return if @current_user # authenticated
 
-    unless @current_identity.present?
-      # RACE CONDITION (qa-report-round1.md M3, security-review-round1.md
-      # I4/M3 context): if two "first contact" requests from the same
-      # browser arrive close enough together that neither has the cookie
-      # yet (e.g. the SPA firing an initial GET refresh and a POST send in
-      # parallel before any Set-Cookie round-trips), each one mints its own
-      # SecureRandom.uuid here independently. Whichever response's
-      # Set-Cookie the browser applies last "wins", and any message written
-      # under the discarded owner_id becomes permanently invisible to that
-      # browser. Cookie-based identity issued from stateless request
-      # handlers is inherently racy for this narrow window — there's no
-      # request-scoped lock across concurrent connections without adding a
-      # shared, synchronous "claim an identity" step server-side (e.g. a
-      # dedicated bootstrap endpoint the SPA awaits before firing parallel
-      # calls), which is more machinery than this pass's scope justifies.
-      # ACCEPTED LIMITATION: documented here rather than engineered around;
-      # revisit if Bonus 1 (real auth/login) replaces cookie-only identity.
-      @current_identity = SecureRandom.uuid
-      cookies.signed[COOKIE] = {
-        value: @current_identity,
-        httponly: true,
-        same_site: same_site_policy,
-        secure: secure_cookie?,
-        expires: 1.year.from_now
-      }
-    end
+    render json: { errors: { base: ["Not authenticated"] } }, status: :unauthorized
   end
 
-  attr_reader :current_identity
+  attr_reader :current_user
+  # Backwards-compatible alias: MessagesController still calls
+  # `current_identity` and expects the owner_id STRING it has always scoped
+  # Message#owner_id by (tech-design.md §13.1 — zero schema/service changes).
+  def current_identity = @current_user&.id&.to_s
+
+  # Called by AuthController on signup/login. Cookie contents = the User id
+  # STRING (nothing else). All flag logic below is UNCHANGED from §2.7.
+  def sign_in(user)
+    @current_user = user
+    cookies.signed[COOKIE] = {
+      value: user.id.to_s, httponly: true,
+      same_site: same_site_policy, secure: secure_cookie?,
+      expires: 1.year.from_now
+    }
+  end
+
+  def sign_out
+    cookies.delete(COOKIE, same_site: same_site_policy, secure: secure_cookie?)
+    @current_user = nil
+  end
 
   # SameSite/Secure policy (qa-report-round1.md M1, security-review-round1.md
   # M3): the default `same_site: :lax` only works when the SPA and API are
   # treated as same-site by the browser (true for localhost:4200 ->
   # localhost:3000 in dev, since SameSite ignores port). The instant the SPA
   # and API are deployed on genuinely different registrable domains (HLD §8 /
-  # Bonus 2), `Lax` cookies are withheld from the SPA's fetch/XHR calls and
-  # CurrentIdentity silently mints a fresh identity on every request.
+  # Bonus 2), `Lax` cookies are withheld from the SPA's fetch/XHR calls.
   #
   # Trade-off: `SameSite=None` is required for real cross-origin credentialed
   # requests, but browsers additionally require `Secure` (HTTPS-only) for any
