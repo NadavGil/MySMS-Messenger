@@ -609,8 +609,14 @@ CORS_ORIGINS=http://localhost:4200
 
 - **Persist-on-failure**: resolved here (persist always). Confirm with client.
 - **Phone format**: adopted E.164; confirm no country restriction.
-- **Pagination**: deferred this pass (`find_for_owner` returns all); revisit if
-  volume grows.
+- **Pagination**: still no cursor/page-based API (deferred; would need a
+  frontend UX change — load more / infinite scroll — that's out of scope for
+  a single-account demo app). Bug blitz (2026-07-15) follow-up: `find_for_owner`
+  is no longer literally unbounded, though — both repository implementations
+  now share a `MAX_RESULTS_PER_OWNER` cap (500, see
+  `Repositories::MessageRepositoryInterface`) so a single owner can't force an
+  ever-growing response payload/DB scan. Revisit with real pagination if
+  volume ever approaches that cap.
 - **History refresh after send**: store `refresh()` re-fetches (server is source
   of truth) rather than optimistic append — simplest correct behavior.
 - **Rate limiting**: out of scope until real Twilio is live (Bonus).
@@ -1400,12 +1406,25 @@ STATUSES = %w[queued sent failed delivered undelivered].freeze
 ```
 
 - **LOCKED list:** `queued`, `sent`, `failed`, `delivered`, `undelivered`.
-- Twilio's callback can also send **`sending`** and **`queued`** as transient
-  intermediate values. We **do not** persist those as status transitions — the
-  controller (§15.5) only writes a status that is a member of `STATUSES`, so a
-  `sending` callback is a **no-op with a 200** (Twilio is satisfied, nothing
-  changes). This keeps `status` a small, meaningful set and avoids flapping the
-  synchronous `sent` back to a less-final `sending`.
+- Twilio's callback can also send **`sending`** as a transient intermediate
+  value not in this list at all. We **do not** persist that as a status
+  transition — the controller (§15.5) only writes a status that is a member
+  of `STATUSES`, so a `sending` callback is a **no-op with a 200** (Twilio is
+  satisfied, nothing changes).
+- **Bug blitz (2026-07-15) correction:** this section previously also
+  claimed `queued` was filtered out the same way as `sending` — that was
+  wrong. `queued` genuinely IS a member of `STATUSES` above (it's also the
+  model's own default), so the `STATUSES.include?` gate alone does **not**
+  stop a delayed/out-of-order `queued` (or `sent`) callback from overwriting
+  an already-`delivered` message. The real fix is the repository-level
+  monotonicity guard added in `Repositories::MessageRepositoryInterface`
+  (`STATUS_RANK` / `regressive_status?`, used by both
+  `update_status_by_external_sid` implementations): `queued` < `sent` <
+  {`delivered`, `failed`, `undelivered`} (the last three are equally
+  terminal), and only a strictly-forward transition is ever written. This
+  is what actually prevents Twilio's at-least-once, unordered callback
+  delivery from flapping a message's status backward — not the `STATUSES`
+  membership check, which only ever filtered `sending`.
 
 ### 15.5 Webhook controller (signature validation, disabled-when-unconfigured)
 

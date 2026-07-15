@@ -163,6 +163,25 @@ RSpec.describe "POST /api/v1/webhooks/twilio/status", type: :request do
       expect(message.status).to eq("delivered")
     end
 
+    # Bug blitz (2026-07-15) follow-up: Twilio's callback delivery has no
+    # ordering guarantee. Before this fix, "queued" was a real member of
+    # MessageDocument::STATUSES (it's also the model's own default), so a
+    # delayed "queued" callback arriving after "delivered" would have
+    # regressed the status backward instead of being treated as stale.
+    it "returns 200 but does not regress an already-delivered message on a delayed out-of-order callback" do
+      Services::Container.message_repository.create(
+        to_number: "+14155550123", body: "hi", owner_id: "owner-5",
+        status: "sent", external_sid: "SID_OUT_OF_ORDER"
+      )
+      post_status_callback(params: { MessageSid: "SID_OUT_OF_ORDER", MessageStatus: "delivered" })
+
+      post_status_callback(params: { MessageSid: "SID_OUT_OF_ORDER", MessageStatus: "queued" })
+
+      expect(response).to have_http_status(:ok)
+      message = Services::Container.message_repository.find_for_owner("owner-5").first
+      expect(message.status).to eq("delivered")
+    end
+
     it "supports the legacy SmsSid/SmsStatus param names" do
       Services::Container.message_repository.create(
         to_number: "+14155550123", body: "hi", owner_id: "owner-4",

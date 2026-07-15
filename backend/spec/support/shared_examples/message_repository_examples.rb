@@ -65,6 +65,20 @@ RSpec.shared_examples "a message repository" do
     it "returns an empty array when the owner has no messages" do
       expect(repository.find_for_owner(owner_id)).to eq([])
     end
+
+    # Bug blitz (2026-07-15) follow-up: previously unbounded. Both
+    # implementations share Repositories::MessageRepositoryInterface::
+    # MAX_RESULTS_PER_OWNER as the cap so they can't drift out of sync. Only
+    # asserting the size here (not which specific record got dropped) — with
+    # cap+1 records created back-to-back in a tight loop, timestamps can tie
+    # at whatever precision the backing store offers, and "returns
+    # newest-first" (above) already covers ordering correctness on its own.
+    it "caps results at MAX_RESULTS_PER_OWNER instead of returning everything" do
+      cap = Repositories::MessageRepositoryInterface::MAX_RESULTS_PER_OWNER
+      (cap + 1).times { |i| repository.create(base_attrs.merge(body: "msg-#{i}")) }
+
+      expect(repository.find_for_owner(owner_id).size).to eq(cap)
+    end
   end
 
   # Bonus 3 (tech-design.md §15.3).
@@ -99,6 +113,37 @@ RSpec.shared_examples "a message repository" do
 
       untouched = repository.find_for_owner(owner_id).find { |m| m.id == other.id }
       expect(untouched.status).to eq("sent")
+    end
+
+    # Bug blitz (2026-07-15) follow-up: Twilio's callback delivery has no
+    # ordering guarantee, so a delayed/retried callback must not regress an
+    # already-more-advanced status backward.
+    it "rejects a regressive update and leaves the current status intact" do
+      repository.create(base_attrs.merge(external_sid: "SID_REGRESS", status: "sent"))
+      repository.update_status_by_external_sid("SID_REGRESS", "delivered")
+
+      result = repository.update_status_by_external_sid("SID_REGRESS", "sent")
+
+      expect(result.status).to eq("delivered")
+      persisted = repository.find_for_owner(owner_id).find { |m| m.external_sid == "SID_REGRESS" }
+      expect(persisted.status).to eq("delivered")
+    end
+
+    it "rejects a same-rank update (no flip-flopping between terminal statuses)" do
+      repository.create(base_attrs.merge(external_sid: "SID_SAME_RANK", status: "sent"))
+      repository.update_status_by_external_sid("SID_SAME_RANK", "delivered")
+
+      result = repository.update_status_by_external_sid("SID_SAME_RANK", "undelivered")
+
+      expect(result.status).to eq("delivered")
+    end
+
+    it "still allows a genuinely forward update" do
+      repository.create(base_attrs.merge(external_sid: "SID_FORWARD", status: "queued"))
+
+      result = repository.update_status_by_external_sid("SID_FORWARD", "sent")
+
+      expect(result.status).to eq("sent")
     end
   end
 end

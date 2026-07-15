@@ -38,6 +38,7 @@ module Repositories
         @records.select { |message| message.owner_id == owner_id }
                 .sort_by(&:created_at)
                 .reverse
+                .first(MessageRepositoryInterface::MAX_RESULTS_PER_OWNER)
       end
     end
 
@@ -48,7 +49,10 @@ module Repositories
         index = @records.index { |m| m.external_sid == external_sid }
         return nil if index.nil?
 
-        updated = @records[index].dup
+        current = @records[index]
+        next current if MessageRepositoryInterface.regressive_status?(current.status, status)
+
+        updated = current.dup
         updated.status = status
         @records[index] = updated
         updated

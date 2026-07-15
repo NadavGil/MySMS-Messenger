@@ -98,6 +98,27 @@ class InMemoryMessageRepositoryTest < Minitest::Test
                  results.map(&:body).sort
   end
 
+  # Bug blitz (2026-07-15) follow-up: find_for_owner used to be unbounded.
+  # Create one more than the cap and confirm only the cap's worth of the
+  # NEWEST messages come back (not an arbitrary/oldest slice).
+  def test_find_for_owner_caps_results_at_max_and_keeps_the_newest
+    cap = Repositories::MessageRepositoryInterface::MAX_RESULTS_PER_OWNER
+    base_time = Time.now.utc - (cap + 1)
+    created = (0..cap).map do |i|
+      message = @repo.create(to_number: "+15550000000", body: "msg-#{i}", owner_id: "owner-1")
+      message.created_at = base_time + i
+      message
+    end
+
+    results = @repo.find_for_owner("owner-1")
+
+    assert_equal cap, results.size
+    # created[cap] is the newest (highest i / created_at); created[0] is the
+    # oldest and must have been dropped by the cap.
+    assert_equal created[cap].id, results.first.id
+    refute_includes results.map(&:id), created[0].id
+  end
+
   def test_clear_empties_the_repository
     @repo.create(to_number: "+15551111111", body: "a", owner_id: "owner-1")
     @repo.clear!
@@ -124,6 +145,47 @@ class InMemoryMessageRepositoryTest < Minitest::Test
   # Bonus 3 (tech-design.md §15.3, §15.10 "miss" case).
   def test_update_status_by_external_sid_returns_nil_on_unknown_sid
     assert_nil @repo.update_status_by_external_sid("NO_SUCH_SID", "delivered")
+  end
+
+  # Bug blitz (2026-07-15) follow-up: a delayed/retried Twilio callback must
+  # not regress an already-more-advanced status backward.
+  def test_update_status_by_external_sid_rejects_a_regressive_update
+    @repo.create(
+      to_number: "+15551234567", body: "hi", owner_id: "owner-1",
+      status: "sent", external_sid: "SIDY"
+    )
+    @repo.update_status_by_external_sid("SIDY", "delivered")
+
+    result = @repo.update_status_by_external_sid("SIDY", "sent")
+
+    assert_equal "delivered", result.status
+    assert_equal "delivered", @repo.find_for_owner("owner-1").first.status
+  end
+
+  # A duplicate/repeat callback at the SAME rank is also rejected (no
+  # flip-flopping between two equally-terminal statuses).
+  def test_update_status_by_external_sid_rejects_a_same_rank_update
+    @repo.create(
+      to_number: "+15551234567", body: "hi", owner_id: "owner-1",
+      status: "sent", external_sid: "SIDZ"
+    )
+    @repo.update_status_by_external_sid("SIDZ", "delivered")
+
+    result = @repo.update_status_by_external_sid("SIDZ", "undelivered")
+
+    assert_equal "delivered", result.status
+  end
+
+  # A genuinely forward update still applies normally.
+  def test_update_status_by_external_sid_still_allows_a_forward_update
+    @repo.create(
+      to_number: "+15551234567", body: "hi", owner_id: "owner-1",
+      status: "queued", external_sid: "SIDW"
+    )
+
+    result = @repo.update_status_by_external_sid("SIDW", "sent")
+
+    assert_equal "sent", result.status
   end
 
   # Bonus 3 (tech-design.md §15.4 STATUSES membership gate — this test lives
