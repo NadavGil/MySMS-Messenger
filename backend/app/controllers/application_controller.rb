@@ -1,4 +1,14 @@
 class ApplicationController < ActionController::API
+  # ActionController::API deliberately omits the `cookies` helper (it's part
+  # of the full ActionController::Base stack, not the lightweight API-only
+  # one). config/application.rb already adds the ActionDispatch::Cookies
+  # *middleware* so signed cookies are parsed off the request, but the
+  # controller-level `cookies`/`cookies.signed` accessor CurrentIdentity
+  # calls also needs this module included explicitly, or every request
+  # blows up with `NameError: undefined local variable or method 'cookies'`
+  # (hit on the director's first real run - never surfaced in the sandbox
+  # since Rails could never boot there at all).
+  include ActionController::Cookies
   include CurrentIdentity
 
   # qa-report-round1.md N3: a Mongo outage/driver error is repackaged by
