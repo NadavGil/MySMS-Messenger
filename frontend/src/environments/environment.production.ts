@@ -7,9 +7,13 @@
 // `/api/api/v1/messages` 404 in production (QA report round1, M2).
 export const environment = {
   production: true,
-  // '' = same-origin deploy (SPA and API served from one domain, e.g. via a
-  // reverse proxy that routes /api/* to Rails). Set this to the deployed API
-  // origin (e.g. 'https://api.example.com') if the SPA and API live on
-  // different domains.
-  apiBaseUrl: '',
+  // Cross-origin two-app Fly deploy (tech-design.md §14.5): the SPA
+  // (mysms-messenger-web) and the API (mysms-messenger-api) are genuinely
+  // separate origins, so this must be the API app's absolute origin — NOT
+  // '/api' and NOT a trailing slash. MessagesApiService always appends the
+  // fixed '/api/v1/...' path itself; mixing conventions produced a double
+  // `/api/api/v1/messages` 404 in production (QA report round1, M2).
+  // PLACEHOLDER app name — director confirms the final Fly app name/URL
+  // (tech-design.md §14.9 open question 1) before the real deploy build.
+  apiBaseUrl: 'https://mysms-messenger-api.fly.dev',
 };
