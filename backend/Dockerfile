@@ -1,5 +1,5 @@
 # ---- build stage: compile gems (needs a C toolchain) ----
-FROM ruby:3.3-slim AS build
+FROM ruby:3.3.0-slim AS build
 ENV RAILS_ENV=production \
     BUNDLE_WITHOUT=development:test \
     BUNDLE_PATH=/usr/local/bundle
@@ -28,7 +28,7 @@ COPY . .
 RUN bundle exec bootsnap precompile app/ lib/ || true
 
 # ---- final stage: lean runtime, no compilers ----
-FROM ruby:3.3-slim AS final
+FROM ruby:3.3.0-slim AS final
 ENV RAILS_ENV=production \
     BUNDLE_WITHOUT=development:test \
     BUNDLE_PATH=/usr/local/bundle
