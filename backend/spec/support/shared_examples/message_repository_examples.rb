@@ -66,4 +66,39 @@ RSpec.shared_examples "a message repository" do
       expect(repository.find_for_owner(owner_id)).to eq([])
     end
   end
+
+  # Bonus 3 (tech-design.md §15.3).
+  describe "#update_status_by_external_sid" do
+    it "updates the status of the message with the matching external_sid" do
+      message = repository.create(base_attrs.merge(external_sid: "SID123", status: "sent"))
+
+      updated = repository.update_status_by_external_sid("SID123", "delivered")
+
+      expect(updated).to be_a(Domain::Message)
+      expect(updated.id).to eq(message.id)
+      expect(updated.status).to eq("delivered")
+    end
+
+    it "persists the update (visible on a subsequent read)" do
+      repository.create(base_attrs.merge(external_sid: "SID456", status: "sent"))
+
+      repository.update_status_by_external_sid("SID456", "undelivered")
+
+      persisted = repository.find_for_owner(owner_id).find { |m| m.external_sid == "SID456" }
+      expect(persisted.status).to eq("undelivered")
+    end
+
+    it "returns nil (a safe no-op) when no message matches the external_sid" do
+      expect(repository.update_status_by_external_sid("UNKNOWN_SID", "delivered")).to be_nil
+    end
+
+    it "does not affect other messages" do
+      other = repository.create(base_attrs.merge(external_sid: "SID_OTHER", status: "sent"))
+
+      repository.update_status_by_external_sid("SID_DIFFERENT", "delivered")
+
+      untouched = repository.find_for_owner(owner_id).find { |m| m.id == other.id }
+      expect(untouched.status).to eq("sent")
+    end
+  end
 end

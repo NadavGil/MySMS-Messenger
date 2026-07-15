@@ -12,9 +12,17 @@ class MessageDocument
   field :external_sid, type: String # Twilio SID (nullable)
 
   index({ owner_id: 1, created_at: -1 })
+  # Bonus 3 (tech-design.md §15.3): lookup index for the Twilio status
+  # webhook. sparse because a send-failure record has external_sid: nil and
+  # should not occupy the index.
+  index({ external_sid: 1 }, { sparse: true })
 
-  # delivered/undelivered are future webhook values (Bonus 3) — status stays
-  # a plain String enum, not a hard Mongoid enum, so new values need no
-  # migration.
-  STATUSES = %w[queued sent failed].freeze
+  # Full delivery-status vocabulary (Bonus 3, tech-design.md §15.4). Plain
+  # String, NOT a hard Mongoid enum, so values need no migration. sent/failed
+  # are set synchronously at send time (SendMessageService); delivered/
+  # undelivered/failed arrive via the Twilio status webhook
+  # (Api::V1::Webhooks::TwilioStatusController). Twilio's transient
+  # sending/queued callback values are intentionally NOT persisted as status
+  # transitions (see the controller's STATUSES membership gate).
+  STATUSES = %w[queued sent failed delivered undelivered].freeze
 end

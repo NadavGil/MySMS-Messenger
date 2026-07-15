@@ -136,6 +136,35 @@ Rate limiting (`rack-attack`, `config/initializers/rack_attack.rb`) throttles
 `POST /api/v1/messages` to 10 requests/minute per identity before any real
 Twilio credentials go live, to bound cost-abuse risk.
 
+## Delivery-status webhooks (Bonus 3)
+
+Message delivery status can now be updated after the fact by an inbound
+Twilio webhook: `POST /api/v1/webhooks/twilio/status` →
+`Api::V1::Webhooks::TwilioStatusController`. Full design in
+`doc/tech-design.md` §15; QA/security review in
+`doc/qa-security-review-bonus3-webhooks.md`.
+
+- **Authenticated by Twilio's request signature** (`X-Twilio-Signature`,
+  validated via `Twilio::Security::RequestValidator`), never the user-login
+  cookie — Twilio can't hold a session cookie, so this is a separate,
+  server-to-server auth mechanism.
+- **Disabled (503) until both `TWILIO_AUTH_TOKEN` and
+  `TWILIO_STATUS_CALLBACK_URL` are set.** There is deliberately no "skip
+  validation in fake mode" flag — an unconfigured endpoint rejects
+  everything rather than ever accepting an unsigned request.
+- `MessageDocument::STATUSES` is now `queued`/`sent`/`failed`/`delivered`/
+  `undelivered` — still a plain `String` field, **no schema migration**.
+  Twilio's transient `sending`/`queued` callback values are intentionally
+  not persisted as status changes.
+- Idempotent by design: a duplicate callback for the same message is a
+  harmless repeat update, not a bug.
+- Same as `TwilioSmsGateway` itself: **implemented and unit-tested, but
+  unverified against a live Twilio callback**, since no real Twilio
+  credentials exist yet. Once credentials are supplied, set
+  `TWILIO_STATUS_CALLBACK_URL` to this deployed backend's public URL, e.g.
+  `https://mysms-messenger-server.onrender.com/api/v1/webhooks/twilio/status`,
+  and the whole path lights up with no further code changes.
+
 ## Deploying (Bonus 2 — Render + MongoDB Atlas)
 
 Full design in `doc/tech-design.md` §14. **Switched from an earlier Fly.io

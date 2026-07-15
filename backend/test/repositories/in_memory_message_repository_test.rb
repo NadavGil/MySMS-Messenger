@@ -104,4 +104,45 @@ class InMemoryMessageRepositoryTest < Minitest::Test
 
     assert_equal [], @repo.find_for_owner("owner-1")
   end
+
+  # Bonus 3 (tech-design.md §15.3, §15.10 "hit" case).
+  def test_update_status_by_external_sid_updates_the_matching_message
+    created = @repo.create(
+      to_number: "+15551234567", body: "hi", owner_id: "owner-1",
+      status: "sent", external_sid: "SIDX"
+    )
+
+    updated = @repo.update_status_by_external_sid("SIDX", "delivered")
+
+    assert_instance_of Domain::Message, updated
+    assert_equal created.id, updated.id
+    assert_equal "delivered", updated.status
+    # and it's the persisted record, not just the returned value:
+    assert_equal "delivered", @repo.find_for_owner("owner-1").first.status
+  end
+
+  # Bonus 3 (tech-design.md §15.3, §15.10 "miss" case).
+  def test_update_status_by_external_sid_returns_nil_on_unknown_sid
+    assert_nil @repo.update_status_by_external_sid("NO_SUCH_SID", "delivered")
+  end
+
+  # Bonus 3 (tech-design.md §15.4 STATUSES membership gate — this test lives
+  # at the repository/domain layer since MessageDocument itself, and the
+  # controller that reads it, both require a full Rails boot).
+  def test_statuses_constant_has_the_locked_final_vocabulary
+    # Guard: MessageDocument requires Mongoid, which requires a full Rails
+    # boot with the mongoid gem installed — unavailable in this sandbox
+    # (standing rubygems.org limitation). Skip gracefully if it can't load
+    # (LoadError, NOT a StandardError, so it must be rescued explicitly),
+    # rather than failing the whole Minitest run over an unrelated
+    # dependency; this assertion DOES run wherever a real bundle install
+    # has succeeded (i.e. wherever this whole app actually runs).
+    begin
+      require_relative "../../app/models/message_document"
+    rescue LoadError, NameError
+      skip "MessageDocument/Mongoid not loadable in this sandbox"
+    end
+
+    assert_equal %w[queued sent failed delivered undelivered], MessageDocument::STATUSES
+  end
 end

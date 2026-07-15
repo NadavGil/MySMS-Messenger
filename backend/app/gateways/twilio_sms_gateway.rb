@@ -13,13 +13,23 @@ module Gateways
     end
 
     def send_sms(to:, body:)
-      message = @client.messages.create(from: from_number, to: to, body: body)
+      args = { from: from_number, to: to, body: body }
+      # Bonus 3 (tech-design.md §15.7): attach the delivery-status webhook
+      # only when configured. Harmless if omitted - TwilioSmsGateway still
+      # works with TWILIO_STATUS_CALLBACK_URL unset.
+      args[:status_callback] = status_callback_url if status_callback_url.present?
+
+      message = @client.messages.create(**args)
       SmsGatewayInterface::Result.new(success: true, external_sid: message.sid, error: nil)
     rescue Twilio::REST::RestError => e
       SmsGatewayInterface::Result.new(success: false, external_sid: nil, error: e.message)
     end
 
     private
+
+    def status_callback_url
+      ENV["TWILIO_STATUS_CALLBACK_URL"]
+    end
 
     def build_client
       Twilio::REST::Client.new(account_sid, auth_token)

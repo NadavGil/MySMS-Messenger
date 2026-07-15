@@ -41,6 +41,20 @@ module Repositories
       end
     end
 
+    # Bonus 3 (tech-design.md §15.3). Unknown external_sid -> nil (safe
+    # no-op, matches MongoMessageRepository's behavior).
+    def update_status_by_external_sid(external_sid, status)
+      @mutex.synchronize do
+        index = @records.index { |m| m.external_sid == external_sid }
+        return nil if index.nil?
+
+        updated = @records[index].dup
+        updated.status = status
+        @records[index] = updated
+        updated
+      end
+    end
+
     # Test helper only — not part of the documented interface.
     def clear!
       @mutex.synchronize { @records.clear }

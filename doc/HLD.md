@@ -40,11 +40,12 @@ Rails** JSON API, a **MongoDB** datastore, and an outbound integration with
 - **Testability as a first-class concern.** Both the SMS gateway and the DAL are
   dependency-injected/interface-based so unit tests substitute fakes without
   touching network or database.
-- **Clean extension path.** The remaining deferred bonus feature
-  (delivery-status webhooks, Bonus 3) can be added later without reworking the
-  core. The identity abstraction built in the previous pass is being cashed in
-  now to add real authentication (Bonus 1) with no change to Message storage or
-  scoping.
+- **Clean extension path (now fully cashed in).** Every bonus that earlier
+  passes only left *seams* for is now implemented on those seams with no core
+  rework: the identity abstraction carried real authentication (Bonus 1) with no
+  change to Message storage or scoping, and — **new this pass** — the
+  `status` + `external_sid` fields and the SMS Gateway seam carry **Twilio
+  delivery-status webhooks (Bonus 3)** with **no schema migration** (see §5, §8).
 - **Deploy-ready by construction.** Live cloud deployment (Bonus 2) is in scope
   this pass. Because everything is config-driven (§7.2), deploying is a matter of
   supplying production configuration to the hosting platform — not code changes —
@@ -78,18 +79,31 @@ Rails** JSON API, a **MongoDB** datastore, and an outbound integration with
   requires a credit card and has no meaningful free tier; Render's free Web
   Service and Static Site instances are genuinely $0/month, no card
   required.)
+- **Twilio delivery-status webhooks** (Bonus 3): an **inbound webhook endpoint**
+  that Twilio calls when a sent message's delivery status changes
+  (`delivered`/`undelivered`/`failed`/etc.), authenticated by **Twilio request
+  signature** (not the user cookie), which looks the message up by
+  `external_sid` and updates its `status`. Built on the existing `status` +
+  `external_sid` fields and the SMS Gateway seam — **no schema migration**
+  (see §4.6, §5, §8). **Brought back into scope at the client's request**
+  (2026-07-15) after being client-approved OUT earlier this engagement.
 
-### Explicitly deferred (intentional non-goals for this pass)
+### Bonus feature scope (all three bonuses now in scope)
 
 | # | Bonus feature | Deferred? | Status / notes |
 |---|---|---|---|
-| **Bonus 2** | Live cloud deployment | **No — now in scope** | Deployed to **Render** (API web service + static-site frontend, two services) with **MongoDB Atlas** as datastore; enabled by the **12-factor / config-driven** design (§7). See §7.5 and §8. |
-| **Bonus 3** | Twilio delivery-status webhooks | Yes (only remaining deferred bonus) | The **`status` field placeholder** on the Message entity (§5) + the SMS Gateway seam (§4.4) that can later carry a callback URL and an inbound webhook controller. |
+| **Bonus 1** | User authentication | **No — in scope** | `has_secure_password` (bcrypt); signup/login/logout/me; `owner_id` re-pointed to a real `User` id with zero schema change (§4.5, §5, §6). |
+| **Bonus 2** | Live cloud deployment | **No — in scope** | Deployed to **Render** (API web service + static-site frontend, two services) with **MongoDB Atlas** as datastore; enabled by the **12-factor / config-driven** design (§7). See §7.5 and §8. |
+| **Bonus 3** | Twilio delivery-status webhooks | **No — now in scope** | Inbound webhook controller authenticated by **Twilio signature** (X-Twilio-Signature); looks the message up by **`external_sid`** and updates `status`. Built on the `status`/`external_sid` fields (§5) + SMS Gateway seam (§4.4/§4.6) — **no schema migration**. **Brought into scope 2026-07-15 at the client's request** (previously client-approved OUT). |
 
-(**Bonus 1 — user authentication — and Bonus 2 — live cloud deployment — are no
-longer deferred; both are in scope this pass** (see §1/§2 above, §4.5, §7.5, §8).
-**Bonus 3 (webhooks) is the sole remaining deferred bonus.**) It is called out so
-the Tech Lead builds seams — not an implementation — for it now.
+(**All three bonuses — user authentication (Bonus 1), live cloud deployment
+(Bonus 2), and Twilio delivery-status webhooks (Bonus 3) — are now in scope this
+pass** (see §4.5/§4.6, §5, §6, §7.5, §8). No bonus remains deferred.
+**CORRECTION (2026-07-15):** an earlier revision of this document called Bonus 3
+"the sole remaining deferred bonus" and directed the Tech Lead to build only
+*seams* for it; the client has since asked for it to be implemented, so those
+seams are now cashed in as a real endpoint this pass, exactly as Bonus 1 and
+Bonus 2 were when each moved from deferred to in-scope.)
 
 ---
 
@@ -214,6 +228,38 @@ the Tech Lead builds seams — not an implementation — for it now.
   *how identity is resolved*, not to how messages are stored or listed, exactly
   as the previous HLD promised.
 
+### 4.6 Inbound delivery-status webhook (Bonus 3)
+
+- **What it is.** A **single inbound webhook controller** that **Twilio** calls
+  (server-to-server, not the browser) each time a previously sent message's
+  delivery status changes — e.g. from `sent` to `delivered`, `undelivered`, or
+  `failed`. This is the read-back half of the SMS Gateway seam (§4.4): the
+  outbound `TwilioSmsGateway#send_sms` hands Twilio a **status-callback URL**
+  pointing at this endpoint, and Twilio POSTs status updates back to it.
+- **How it authenticates — NOT the user cookie.** Twilio is a third party and
+  **cannot hold a signed session cookie**, so the existing `CurrentIdentity`
+  cookie gate does **not** apply here (mirroring how `HealthController` opts out
+  of that gate). Instead the endpoint authenticates the *caller* by validating
+  **Twilio's request signature** (the `X-Twilio-Signature` header, an HMAC-SHA1
+  over the exact callback URL + POST params, keyed by the account's
+  `TWILIO_AUTH_TOKEN`). A request whose signature does not verify is rejected;
+  the endpoint is therefore public-by-routing but **not** an open,
+  anyone-can-write status mutator.
+- **How the message is looked up.** By **`external_sid`** — the provider message
+  id (Twilio SID) already stored on each Message at send time (§5). The webhook
+  reads Twilio's `MessageSid`, finds the one Message with that `external_sid` via
+  the repository, and updates its `status`. **Terminology note:** earlier
+  revisions of this document called this field `provider_message_id`; it is
+  named **`external_sid`** in the actual code and data model, and this document
+  is now **aligned to that real name** throughout (§5).
+- **What it writes.** Only the `status` field (and the audit `updated_at`). The
+  update is keyed by `external_sid`, so an unknown/unmatched SID is a **safe
+  no-op**, and a duplicate callback (Twilio may deliver the same status more than
+  once) is **idempotent by construction** — it re-writes the same value.
+- **No cookie, no user scoping here.** Unlike the message endpoints, this
+  endpoint is not scoped to a `User`; the Twilio signature *is* its
+  authorization. It never reads or trusts an `owner_id` from the caller.
+
 ---
 
 ## 5. Data Model Overview
@@ -243,18 +289,28 @@ Notes:
 | `to_number` | string | Destination phone number. |
 | `body` | string (≤250 chars) | Message text. |
 | `owner_id` | string | The `CurrentIdentity` value — **now a real `User` id** (previously an anonymous session id). Same field, same type; **no schema migration needed**, exactly as this document previously promised. **The scoping key.** |
-| `status` | string (enum) | Delivery status **placeholder** — e.g. `queued`/`sent`; defaults to a simple "submitted" value now. Reserved for Bonus 3 webhook updates. |
-| `provider_message_id` | string, nullable | Reference returned by the gateway (Twilio SID later); enables future status correlation. |
+| `status` | string | Delivery status. Set synchronously at send time to `sent` (gateway accepted) or `failed` (gateway rejected), and **now updated by the Bonus 3 webhook** to `delivered`/`undelivered`/`failed` when Twilio reports the final delivery outcome. Stored as a plain `String` (not a hard DB enum), so new values need no migration. |
+| `external_sid` | string, nullable | Provider-assigned message id returned by the gateway (the **Twilio SID**, e.g. `SM…`; a `SM<hex>` fake id from `FakeSmsGateway`). **This is the key the delivery-status webhook (§4.6) looks a message up by.** (**CORRECTION:** earlier revisions named this field `provider_message_id`; the real code/field name is **`external_sid`** and this document is now aligned to it.) |
 | `created_at` | timestamp (UTC) | When the message was created; drives the history timestamp display. |
-| `updated_at` | timestamp (UTC) | Standard audit field; future status updates touch this. |
+| `updated_at` | timestamp (UTC) | Standard audit field; **the delivery-status webhook update touches this**. |
 
 Notes:
 - `owner_id` is indexed to make the scoped listing query efficient.
 - `owner_id` now references a `User` id; because it was already an opaque owner
   identifier, pointing it at a real user is a semantic change only — no field or
   index change.
-- `status` and `provider_message_id` exist now but are inert; they let webhooks
-  (Bonus 3) update records later with **no schema migration**.
+- `status` and `external_sid` were previously described as inert placeholders;
+  **as of this pass they are live** — `external_sid` is the webhook lookup key
+  and `status` is mutated by the inbound webhook (§4.6, Bonus 3). This is
+  achieved with **no schema migration**, exactly as this document promised while
+  the fields were still placeholders.
+- **Status vocabulary.** The `status` field stores one of
+  `queued` / `sent` / `failed` / `delivered` / `undelivered`. `sent`/`failed`
+  are set at send time; `delivered`/`undelivered`/`failed` arrive via the
+  webhook. Twilio's transient intermediate values (`sending`, and `queued` as a
+  callback value) are **not** persisted as status transitions — the webhook
+  ignores any status outside the stored vocabulary (safe no-op). The Tech Lead's
+  §15 fixes the exact list and mapping.
 
 ---
 
@@ -271,10 +327,15 @@ endpoints and two message endpoints:
 | `DELETE` | `/api/logout` (or `POST`) | End the session; clear the auth cookie. | Requires authentication. |
 | `POST` | `/api/messages` | Send an SMS: validate input, invoke the SMS Gateway, persist the resulting Message. | **Requires auth**; stamps the new record with the current user id. |
 | `GET` | `/api/messages` | List previously sent messages for the history panel (typically newest-first). | **Requires auth**; returns **only** records whose `owner_id` matches the current user. |
+| `POST` | `/api/…/webhooks/twilio/status` (indicative) | **Inbound Twilio delivery-status webhook (Bonus 3, §4.6).** Twilio POSTs a status change; the endpoint looks the message up by `external_sid` and updates `status`. | **Not cookie-authed** — authenticated by **Twilio request signature** (`X-Twilio-Signature`). No user scoping; the signature is the authorization. |
 
-- The two message endpoints now **require authentication**: an unauthenticated
-  request receives `401` instead of the API silently minting an anonymous
-  identity.
+- The two **message** endpoints now **require authentication**: an
+  unauthenticated request receives `401` instead of the API silently minting an
+  anonymous identity.
+- The **webhook** endpoint is deliberately outside the user-cookie auth model
+  (Twilio can't carry a cookie); it opts out of the `CurrentIdentity`
+  before-action (as `HealthController` does) and validates the Twilio signature
+  instead. It never trusts a caller-supplied `owner_id` (§4.6, §7.3).
 - Responses are JSON. Standard HTTP status codes convey success/validation/error.
 
 ---
@@ -328,6 +389,24 @@ endpoints and two message endpoints:
   environment variables, `sync: false` in `render.yaml`).
 - Scoping by `owner_id` (now a `User` id) prevents one user from reading
   another user's messages.
+- **Inbound Twilio webhook (Bonus 3, §4.6) is a public-by-routing endpoint and
+  is treated as hostile-by-default.** It is **not** cookie-authenticated (Twilio
+  can't carry a cookie), so it must **not** allow arbitrary status writes from
+  anyone but Twilio. Controls: (a) **Twilio request-signature validation**
+  (`X-Twilio-Signature`, HMAC-SHA1 over the callback URL + params, keyed by
+  `TWILIO_AUTH_TOKEN`) rejects any caller that can't prove it is Twilio; (b) the
+  endpoint **only ever updates `status` looked up by `external_sid`** — it never
+  creates records and never trusts a caller-supplied `owner_id`; (c) **replay /
+  idempotency** — because the write is an update keyed by `external_sid`,
+  Twilio's documented at-least-once redelivery is harmless (a replay re-writes
+  the same value); (d) if the signing secret is absent (the current
+  `SMS_PROVIDER=fake` posture, no live Twilio credentials), the endpoint is
+  **disabled and rejects everything** rather than silently accepting unsigned
+  requests — so flipping `SMS_PROVIDER=twilio` without a real token can never
+  quietly open an unauthenticated status-write hole; (e) it can be rack-attack
+  rate-limited (matching the send/login/signup pattern) to blunt abuse from
+  non-Twilio sources before signature validation even runs. Exact mechanics are
+  fixed in `doc/tech-design.md` §15.
 
 ### 7.4 Scalability
 
@@ -391,11 +470,14 @@ end-to-end without sending real SMS.
 
 ---
 
-## 8. Extension to Remaining Deferred Bonuses (without major rework)
+## 8. Bonus Features Delivered on the Existing Seams (without major rework)
 
-> Bonus 1 (user authentication) and Bonus 2 (live cloud deployment) are now
-> implemented in this pass — see §4.5, §5, §6, §7.3 (auth) and §7.5 (deploy).
-> **Bonus 3 below is the only remaining deferred bonus.**
+> **All three bonuses are now implemented in this pass** — Bonus 1 (user
+> authentication, §4.5/§5/§6/§7.3), Bonus 2 (live cloud deployment, §7.5), and
+> — **new this pass** — Bonus 3 (Twilio delivery-status webhooks, §4.6/§5/§6/
+> §7.3). **No bonus remains deferred.** Each was delivered by *cashing in* a
+> seam an earlier pass deliberately left, with **no core rework and no schema
+> migration** — exactly as this document repeatedly promised.
 
 ### Bonus 2 — Live cloud deployment (now in scope, see §7.5)
 
@@ -410,13 +492,30 @@ end-to-end without sending real SMS.
   dev team's deliverables; this HLD fixes the architecture and configuration
   surface only.
 
-### Bonus 3 — Twilio delivery-status webhooks (only remaining deferred bonus)
+### Bonus 3 — Twilio delivery-status webhooks (now in scope, see §4.6)
 
-- The Message entity already has `status` and `provider_message_id` placeholders.
-- When sending, pass a status-callback URL to the `TwilioSmsGateway`.
-- Add one inbound webhook controller that Twilio calls; it looks up the message by
-  `provider_message_id` (via the repository) and updates `status`.
-- No change to the send/list flows or the data shape — the seams already exist.
+- **Delivered on the pre-existing seams.** The Message entity already carried
+  `status` and `external_sid` (§5), and the SMS Gateway abstraction (§4.4) was
+  built to later carry a callback URL — both are now used for real, with **no
+  schema migration and no change to the send/list flows or the data shape**.
+- **Outbound side.** `TwilioSmsGateway#send_sms` now passes a **status-callback
+  URL** to Twilio (from an env var, since the backend's own public URL isn't
+  otherwise known to itself). `FakeSmsGateway` needs no callback (it never
+  really sends, so no callback will ever fire).
+- **Inbound side.** **One** new inbound webhook controller (its own route/
+  namespace, not bolted onto `MessagesController`) that Twilio POSTs to; it
+  **validates the Twilio request signature** (not the user cookie — §4.6/§7.3),
+  looks the message up by **`external_sid`** via the repository, and updates
+  `status`. An unmatched SID is a safe no-op; redelivery is idempotent.
+- **Repository gets one new method.** The `MessageRepository` interface gains an
+  update-status-by-`external_sid` operation, implemented by both the Mongo and
+  in-memory repositories — the only DAL change, and additive.
+- **Honest caveat (same posture as `TwilioSmsGateway` itself, §9).** Because no
+  live Twilio credentials have been supplied yet (`SMS_PROVIDER=fake`), this
+  endpoint is fully implemented and unit-tested but **cannot be verified against
+  a real Twilio callback this pass** — while the signing secret is absent the
+  endpoint is disabled (rejects everything), so it is safe by default until
+  credentials exist. Exact implementation is fixed in `doc/tech-design.md` §15.
 
 ---
 
@@ -450,7 +549,16 @@ end-to-end without sending real SMS.
 
 - **Twilio integration untested** until credentials arrive — mitigated by the
   gateway seam, but the real adapter must be integration-tested before any live
-  use (SMS incurs cost and has deliverability nuances).
+  use (SMS incurs cost and has deliverability nuances). **This now covers the
+  Bonus 3 delivery-status webhook (§4.6) as well:** the endpoint is fully
+  implemented and unit-tested (signature validation, disabled-when-unconfigured,
+  unknown-SID no-op, idempotent replay), but — exactly like `TwilioSmsGateway` —
+  it **cannot be verified against a live Twilio callback this pass** because no
+  real credentials or callback URL exist yet. Until then the endpoint is
+  **disabled by default** (rejects everything while `TWILIO_AUTH_TOKEN` is
+  blank), so the unverified path is also inert-and-safe, not open. It must be
+  smoke-tested against a real Twilio status callback once credentials are
+  supplied.
 - **Cost/abuse exposure** once real sending is enabled — mitigated by
   authentication (now in scope) plus rate limiting on send.
 - **Deployment risk (first real deploy).** This is the **first time the app runs

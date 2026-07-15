@@ -1264,3 +1264,401 @@ its real `onrender.com` hostname, put that into the backend's
 `environment.production.ts`'s `apiBaseUrl` **before** creating/building the
 frontend static site (the URL is baked in at build time, not read at
 runtime).
+
+---
+
+## 15. Bonus 3: Twilio Delivery-Status Webhooks
+
+> Implements HLD §4.6 / §8 Bonus 3. **Brought into scope 2026-07-15 at the
+> client's request** (previously client-approved OUT). Cashes in two seams
+> earlier passes deliberately left: the `status` + `external_sid` fields on the
+> Message (§3.4) and the SMS Gateway abstraction (§4). **Decisions locked below
+> (do not re-litigate):** a **new** dedicated webhook controller/namespace (NOT
+> bolted onto `MessagesController`); authenticated by **Twilio request
+> signature**, never the `:msms_owner` cookie (Twilio can't carry it — mirrors
+> how `HealthController` opts out of the auth gate); message lookup by
+> **`external_sid`** (the real field name — HLD's old `provider_message_id`
+> terminology is now aligned); one additive repository method; `status` stays a
+> plain `String` (no Mongoid enum, no migration). **Live-verification caveat:**
+> `SMS_PROVIDER=fake` and no real Twilio credentials exist this pass, so — as
+> with `TwilioSmsGateway` itself (§4.2, CP11) — this endpoint is fully built and
+> unit-tested but **unverified against a real Twilio callback**. While the
+> signing secret is absent it is **disabled (rejects everything)**, so the
+> unverified path is inert-and-safe, not open.
+
+### 15.1 What does NOT change (promises kept)
+
+- **No schema migration.** `MessageDocument` gains no new field. `status` is
+  already a `String` (default `"queued"`) and `external_sid` already exists and
+  is already populated at send time (§3.4, §5). The only additive change is one
+  new **index** on `external_sid` for the lookup (created the same way as the
+  existing `owner_id` compound index, via `db:mongoid:create_indexes` — §14.7
+  step 6), not a field/migration.
+- **Send/list flows untouched.** `SendMessageService`, `ListMessagesService`,
+  `MessagesController`, the §6 API contract, and the serializer are unchanged.
+  `MessagesController#serialize` already returns `status` + `external_sid`, so
+  the frontend automatically sees updated statuses on the next `GET` with no
+  frontend change required this pass (frontend rendering of delivery state is a
+  separate, out-of-scope UI story — see §15.12).
+- **Auth/identity untouched.** `CurrentIdentity`, the cookie, CORS credentials,
+  and the message-endpoint 401 behavior are unchanged. The webhook simply opts
+  out of the auth `before_action`.
+
+### 15.2 Route & controller namespace
+
+`config/routes.rb` — add a `webhooks` namespace **inside** the existing
+`namespace :api / namespace :v1` block, alongside `resources :messages` and the
+`auth/*` routes:
+
+```ruby
+namespace :webhooks do
+  post "twilio/status", to: "twilio_status#create"
+end
+```
+
+- **Exact route (LOCKED):** `POST /api/v1/webhooks/twilio/status`.
+- Maps to **`Api::V1::Webhooks::TwilioStatusController#create`**, new file
+  `app/controllers/api/v1/webhooks/twilio_status_controller.rb`. A dedicated
+  controller in its own `Webhooks::` sub-namespace keeps webhook concerns
+  (signature auth, no user scoping) fully separate from `MessagesController`.
+
+### 15.3 Repository interface change
+
+Add **one** method to `Repositories::MessageRepositoryInterface`
+(`app/repositories/message_repository_interface.rb`), implemented by **both**
+`MongoMessageRepository` and `InMemoryMessageRepository`:
+
+```ruby
+# @param external_sid [String] provider message id (Twilio SID)
+# @param status [String] new delivery status. Caller (§15.4) is responsible
+#   for passing only a member of MessageDocument::STATUSES; the repository
+#   does not re-whitelist.
+# @return [Domain::Message, nil] the updated message, or nil if NO message has
+#   that external_sid. A miss is a deliberate, non-error "safe no-op" so the
+#   controller can answer Twilio 200 (a non-2xx would make Twilio retry a
+#   message that will never exist — pointless log noise, §15.8).
+def update_status_by_external_sid(external_sid, status)
+  raise NotImplementedError, "#{self.class} must implement #update_status_by_external_sid"
+end
+```
+
+**`Repositories::MongoMessageRepository`** (`mongo_message_repository.rb`):
+```ruby
+def update_status_by_external_sid(external_sid, status)
+  document = MessageDocument.where(external_sid: external_sid).first
+  return nil if document.nil?          # unknown SID -> safe no-op (not an error)
+
+  document.update!(status: status)
+  to_domain(document)                  # reuse the existing private mapper
+rescue Mongo::Error => e
+  raise_repository_error("update_status_by_external_sid", e) # -> RepositoryError -> 503
+end
+```
+- Add the lookup index to `MessageDocument` (§15.5):
+  `index({ external_sid: 1 }, { sparse: true })` — `sparse` because a
+  send-failure record has `external_sid: nil` and should not occupy the index.
+- A `Mongo::Error` still routes through the existing
+  `raise_repository_error` → `RepositoryError` → `ApplicationController`
+  `rescue_from` → **503**; for the webhook a 503 on a genuine DB outage is
+  *correct* (Twilio retries later, which is what you want for a transient
+  failure), so no special handling is needed.
+
+**`Repositories::InMemoryMessageRepository`** (`in_memory_message_repository.rb`)
+— guard with the existing `@mutex` exactly like `create`/`find_for_owner`:
+```ruby
+def update_status_by_external_sid(external_sid, status)
+  @mutex.synchronize do
+    index = @records.index { |m| m.external_sid == external_sid }
+    return nil if index.nil?
+
+    updated = @records[index].dup       # Domain::Message is a mutable Struct
+    updated.status = status
+    @records[index] = updated
+    updated
+  end
+end
+```
+
+Both implementations are covered by extending the existing
+`"a message repository"` shared example (§7) so contract parity is proven on
+both.
+
+### 15.4 `MessageDocument::STATUSES` — final list
+
+`app/models/message_document.rb` — expand the constant (and the comment) to the
+final vocabulary, still a **plain `String` field, no Mongoid enum, no
+migration**:
+
+```ruby
+field :status, type: String, default: "queued"
+# ...
+# Full delivery-status vocabulary (Bonus 3, tech-design.md §15.4). Plain String,
+# NOT a hard Mongoid enum, so values need no migration. sent/failed are set
+# synchronously at send time (SendMessageService); delivered/undelivered/failed
+# arrive via the Twilio status webhook (Api::V1::Webhooks::TwilioStatusController).
+STATUSES = %w[queued sent failed delivered undelivered].freeze
+```
+
+- **LOCKED list:** `queued`, `sent`, `failed`, `delivered`, `undelivered`.
+- Twilio's callback can also send **`sending`** and **`queued`** as transient
+  intermediate values. We **do not** persist those as status transitions — the
+  controller (§15.5) only writes a status that is a member of `STATUSES`, so a
+  `sending` callback is a **no-op with a 200** (Twilio is satisfied, nothing
+  changes). This keeps `status` a small, meaningful set and avoids flapping the
+  synchronous `sent` back to a less-final `sending`.
+
+### 15.5 Webhook controller (signature validation, disabled-when-unconfigured)
+
+`app/controllers/api/v1/webhooks/twilio_status_controller.rb` (sketch — full
+implementation is CP24):
+
+```ruby
+module Api
+  module V1
+    module Webhooks
+      class TwilioStatusController < ApplicationController
+        # Twilio cannot hold the :msms_owner cookie, so skip the auth gate
+        # (mirrors HealthController). The Twilio SIGNATURE is the auth (below),
+        # NOT the cookie.
+        skip_before_action :resolve_current_identity
+
+        # POST /api/v1/webhooks/twilio/status
+        def create
+          # (a) DISABLED when unconfigured: no signing secret -> we cannot
+          #     verify anyone, so reject everything rather than accept unsigned
+          #     requests. This is the SMS_PROVIDER=fake / no-creds posture, and
+          #     also protects against someone flipping SMS_PROVIDER=twilio
+          #     without a token. 503 (not 200) so a misconfig is visible.
+          return head :service_unavailable if auth_token.blank?
+
+          # (b) AUTHENTICATE the caller as Twilio via request signature.
+          return head :forbidden unless valid_twilio_signature?
+
+          sid    = params[:MessageSid] || params[:SmsSid]      # Twilio SID
+          status = (params[:MessageStatus] || params[:SmsStatus]).to_s
+
+          # (c) Only write a whitelisted status for a known SID. Unknown SID,
+          #     unstored status (e.g. "sending"), or missing params => no-op.
+          if sid.present? && MessageDocument::STATUSES.include?(status)
+            Services::Container.message_repository
+                               .update_status_by_external_sid(sid, status)
+          end
+
+          # (d) ALWAYS 200 on an authenticated call (even a no-op) so Twilio
+          #     stops retrying. (RepositoryError on a DB outage is the one
+          #     exception: it surfaces as 503 via ApplicationController's
+          #     rescue_from, and Twilio's retry is then the desired behavior.)
+          head :ok
+        end
+
+        private
+
+        def auth_token = ENV["TWILIO_AUTH_TOKEN"]  # already read by TwilioSmsGateway
+
+        def valid_twilio_signature?
+          signature = request.headers["X-Twilio-Signature"].to_s
+          return false if signature.empty?
+
+          Twilio::Security::RequestValidator.new(auth_token)
+            .validate(callback_url, request.request_parameters, signature)
+        end
+
+        # See §15.6 — validate against the EXACT configured callback URL rather
+        # than reconstructing the request URL behind Render's TLS-terminating
+        # proxy.
+        def callback_url = ENV.fetch("TWILIO_STATUS_CALLBACK_URL")
+      end
+    end
+  end
+end
+```
+
+**Behavior matrix (LOCKED — all four rows are acceptance criteria at CP24):**
+
+| Condition | Response |
+|---|---|
+| `TWILIO_AUTH_TOKEN` blank/unset (the current fake-mode default) | **503** — endpoint disabled, rejects everything; never accepts unsigned |
+| Token set, `X-Twilio-Signature` missing or invalid | **403** — caller is not (provably) Twilio |
+| Token set, signature valid, but SID unknown / status not in `STATUSES` / params missing | **200** — safe no-op (Twilio stops retrying) |
+| Token set, signature valid, SID known, status ∈ `STATUSES` | **200** — `status` updated |
+
+- **There is deliberately NO "fake signature bypass" env flag.** Skipping
+  validation in fake mode but not in prod would be a security footgun if someone
+  flips `SMS_PROVIDER=twilio` without locking the endpoint down. Instead the
+  disabled-when-blank behavior (row 1) gives the safe-in-fake-mode outcome
+  *without* ever running an unauthenticated write path. Tests (§15.7) exercise
+  the **real** validator by setting a test `TWILIO_AUTH_TOKEN` and generating a
+  genuinely valid signature — no bypass needed.
+- `Services::Container.message_repository` is the same memoized, shared instance
+  the rest of the app uses (§2.6) — the webhook needs only the repository, not
+  the full `send_message_service`.
+
+### 15.6 `force_ssl` / proxy interaction & the URL passed to the validator
+
+Twilio computes `X-Twilio-Signature` as an HMAC-SHA1 over **the exact callback
+URL it was told to hit** plus the (alphabetically sorted) POST params. The URL
+must match **byte-for-byte** or validation fails. This is subtle behind Render's
+TLS-terminating proxy (the same class of issue already documented for `/health`
+and `force_ssl` in §14.6): the request arrives at the container over plain HTTP,
+so a naive `request.original_url` can reconstruct as `http://…` or with an
+internal host, **not** the public `https://…` URL Twilio actually signed.
+
+- **Chosen approach (LOCKED): validate against the configured
+  `TWILIO_STATUS_CALLBACK_URL` constant, not a reconstructed request URL.**
+  Because *we* set `status_callback:` to exactly that URL on the outbound send
+  (§15.7), it is **by construction** the exact URL Twilio calls and signs.
+  Passing the same env-configured string to `RequestValidator#validate`
+  sidesteps all proxy-header reconstruction entirely — no dependence on
+  `X-Forwarded-Proto`/`X-Forwarded-Host` being present and trusted on Twilio's
+  inbound call.
+- **Rejected alternative:** reconstruct via `request.original_url` after
+  configuring Rails to trust `X-Forwarded-Proto` from the proxy. More moving
+  parts, more failure modes (Twilio does not attach query params to a status
+  callback, so there's nothing dynamic we'd lose by using the fixed URL), and it
+  re-introduces exactly the proxy-scheme fragility §14.6 already had to work
+  around. The fixed-URL approach is strictly simpler and more robust here.
+- `force_ssl = true` still applies to this path (it is under `/api/…`, **not**
+  `/health`, so it is intentionally *not* in the §14.6 SSL-redirect exclude) —
+  Twilio always calls the `https://` callback URL, so the redirect never fires
+  in practice.
+
+### 15.7 Outbound: attaching the status-callback URL
+
+`Gateways::TwilioSmsGateway#send_sms` (`twilio_sms_gateway.rb`) adds a
+`status_callback:` param to the Twilio API call **only when configured**:
+
+```ruby
+def send_sms(to:, body:)
+  args = { from: from_number, to: to, body: body }
+  callback = ENV["TWILIO_STATUS_CALLBACK_URL"]
+  args[:status_callback] = callback if callback.present?
+  message = @client.messages.create(**args)
+  SmsGatewayInterface::Result.new(success: true, external_sid: message.sid, error: nil)
+rescue Twilio::REST::RestError => e
+  SmsGatewayInterface::Result.new(success: false, external_sid: nil, error: e.message)
+end
+```
+
+- **ENV var (LOCKED): `TWILIO_STATUS_CALLBACK_URL`** — the deployed backend's
+  own public webhook URL, e.g.
+  `https://mysms-messenger-server.onrender.com/api/v1/webhooks/twilio/status`.
+  It **must** be an env var because the backend does not otherwise know its own
+  public origin (same reason the frontend's `apiBaseUrl` is configured, §14.5).
+  Add it to `.env.example` (blank, alongside the other `TWILIO_*` vars) and,
+  once creds exist, as a Render dashboard env var on the API service.
+- **`FakeSmsGateway` is NOT changed** — it never really sends, so no callback
+  will ever fire; wiring a callback into it would be dead config. This keeps the
+  fake path exactly as-is.
+- Passing `status_callback` is harmless if omitted (guarded by `.present?`), so
+  `TwilioSmsGateway` still works with the var unset.
+
+### 15.8 Rate limiting & idempotency
+
+- **Rate limiting (recommended — add it).** Extend the existing
+  `class Rack::Attack` (`config/initializers/rack_attack.rb`, same
+  `unless Rails.env.test? || RACK_ATTACK_DISABLED` guard and JSON
+  `throttled_responder`) with a throttle for the webhook:
+  ```ruby
+  # Generous: Twilio legitimately sends many status callbacks; this exists to
+  # blunt abuse from NON-Twilio sources hammering the endpoint before the
+  # signature check even runs. Keyed by IP (no cookie/owner here to key on).
+  throttle("webhooks/twilio/ip", limit: 60, period: 60) do |req|
+    req.ip if req.post? && req.path == "/api/v1/webhooks/twilio/status"
+  end
+  ```
+  Keyed by **IP** (60/min) — matches the existing send/login/signup throttle
+  pattern. It is a coarse pre-auth abuse guard, not the primary control (the
+  signature is); 60/min is generous enough not to drop real Twilio bursts.
+- **Idempotency (already correct by design — do NOT "fix" later).** Twilio may
+  deliver the same status callback more than once (documented at-least-once
+  behavior). The write is an **UPDATE keyed by `external_sid`, not a create**, so
+  a duplicate callback re-writes the same `status` value — harmless and
+  naturally idempotent. No dedup table, no "seen SID" cache, and no unique
+  constraint beyond the lookup are needed; adding any would be unnecessary
+  complexity. This is called out explicitly so it is not mistaken for a gap.
+
+### 15.9 API contract (new webhook endpoint)
+
+**`POST /api/v1/webhooks/twilio/status`** — request is
+`application/x-www-form-urlencoded` (Twilio's format), key params
+`MessageSid` (or legacy `SmsSid`) and `MessageStatus` (or legacy `SmsStatus`),
+plus the `X-Twilio-Signature` header.
+
+| Situation | Status | Body |
+|---|---|---|
+| Not configured (`TWILIO_AUTH_TOKEN` blank) | `503` | none (`head`) |
+| Missing/invalid signature | `403` | none (`head`) |
+| Valid signature; unknown SID / unstored status / missing params | `200` | none (`head`) — safe no-op |
+| Valid signature; known SID; status ∈ `STATUSES` | `200` | none (`head`) — `status` updated |
+| DB unavailable mid-update (`RepositoryError`) | `503` | `{ "errors": { "base": ["Message storage is temporarily unavailable (update_status_by_external_sid failed)"] } }` (existing shape) |
+
+Response bodies are intentionally empty on success — Twilio ignores the body and
+only cares about the 2xx/non-2xx status. This endpoint is **not** part of the
+frontend/backend §6/§9 contract (no SPA caller); it is a server-to-server
+integration surface.
+
+### 15.10 Testing strategy (RSpec + zero-gem Minitest)
+
+- **Request spec** (`spec/requests/api/v1/webhooks/twilio_status_spec.rb`) — set
+  a **test `TWILIO_AUTH_TOKEN`**, build a **genuinely valid** `X-Twilio-Signature`
+  with `Twilio::Security::RequestValidator.new(token).build_signature_for(url, params)`
+  (the same class used to validate), and assert all four behavior-matrix rows
+  (§15.5): 503 when token blank, 403 on bad/missing signature, 200 no-op on
+  unknown SID / `sending` status, 200 + persisted status change on a valid known
+  callback. Run with `MESSAGE_REPOSITORY=in_memory` so no Mongo is needed.
+- **Repository specs** — extend the `"a message repository"` shared example with
+  `update_status_by_external_sid` cases (updates the right record; returns the
+  updated `Domain::Message`; returns `nil` on unknown sid) so both `InMemory`
+  and (tagged) `Mongo` prove parity.
+- **Gateway spec** — extend the stubbed-`Twilio::REST::Client` `TwilioSmsGateway`
+  spec to assert `status_callback:` is forwarded to `messages.create` when
+  `TWILIO_STATUS_CALLBACK_URL` is set, and omitted when it is not.
+- **Zero-gem Minitest** (`backend/test/`, the suite that actually executes in
+  this sandbox) — cover the framework-independent parts:
+  `InMemoryMessageRepository#update_status_by_external_sid` (hit + miss) and the
+  `STATUSES` membership gate. (Controller signature validation depends on
+  `twilio-ruby` + Rails routing, so it lives only in the RSpec layer, which —
+  like the rest of the suite — remains unexecuted in this sandbox per the
+  standing rubygems.org limitation.)
+
+### 15.11 Checkpoint plan (continues CP1–CP22)
+
+| CP | Story | Acceptance criteria | Role | Size |
+|----|-------|---------------------|------|------|
+| **CP23** | Repository status-update method + `STATUSES` expansion | `MessageRepositoryInterface#update_status_by_external_sid(external_sid, status)` added; both `Mongo`/`InMemory` implement it (return updated `Domain::Message`, or `nil` on unknown sid — a non-error no-op); `MessageDocument::STATUSES` = `queued/sent/failed/delivered/undelivered`; additive sparse `index({ external_sid: 1 }, { sparse: true })`; shared-example repo spec proves update + nil-on-miss on both impls; zero-gem Minitest covers the InMemory hit/miss | Senior BE | M |
+| **CP24** | Twilio status webhook controller + route + signature auth + throttle | `POST /api/v1/webhooks/twilio/status` → `Api::V1::Webhooks::TwilioStatusController#create`; `skip_before_action :resolve_current_identity`; §15.5 behavior matrix exact (503 blank-token / 403 bad-sig / 200 no-op / 200 updated); validates against `TWILIO_STATUS_CALLBACK_URL` (§15.6); `rack_attack` `webhooks/twilio/ip` 60/60 added; request spec builds a real valid signature (test token) and asserts all four rows + idempotent replay | Senior BE | M |
+| **CP25** | Outbound `status_callback` wiring | `TwilioSmsGateway#send_sms` passes `status_callback: ENV["TWILIO_STATUS_CALLBACK_URL"]` when present, omits it when blank; `FakeSmsGateway` unchanged; `.env.example` gains `TWILIO_STATUS_CALLBACK_URL=`; stubbed-client gateway spec asserts the param is forwarded / omitted | Junior BE | S |
+
+**Parallelization:** CP23 first (blocks CP24 — the controller calls the new
+repository method). CP25 is independent of both and can run in parallel with
+CP23/CP24. All three are backend-only; no frontend CP this pass (§15.12 Q4).
+**Live verification of the real Twilio callback is gated on the director
+supplying credentials + the deployed callback URL — same BLOCKED-ON-DIRECTOR
+posture as CP11/CP22** (see §15.12).
+
+### 15.12 Open questions for the director
+
+1. **Final webhook path.** Proposed and used throughout:
+   `POST /api/v1/webhooks/twilio/status`. Confirm, or specify a different path
+   (it must also be set as `TWILIO_STATUS_CALLBACK_URL` and in the Twilio
+   console, so the two always agree).
+2. **Twilio credentials this pass?** The endpoint is disabled (503, rejects
+   everything) until a real `TWILIO_AUTH_TOKEN` exists, and cannot be verified
+   against a live Twilio callback without one (same standing gap as
+   `TwilioSmsGateway`, §4.2/CP11). Will credentials be supplied now to smoke-test
+   it live, or does it ship implemented-but-unverified?
+3. **`TWILIO_STATUS_CALLBACK_URL` target.** Confirm it should point at the real
+   deployed backend, i.e.
+   `https://mysms-messenger-server.onrender.com/api/v1/webhooks/twilio/status`,
+   once Twilio creds exist. (**Note:** the live backend appears to be
+   `mysms-messenger-server.onrender.com`; §14 still uses the placeholder name
+   `mysms-messenger-api` — please confirm the actual service name so this URL,
+   `CORS_ORIGINS`, and `apiBaseUrl` all agree.)
+4. **Frontend delivery-status UI.** This pass is backend-only. `status`
+   (`delivered`/`undelivered`/etc.) is already in the `GET /api/v1/messages`
+   response but not rendered by the SPA. Want a follow-up story to show delivery
+   state on each history card, or is API-level status sufficient for now?
+5. **Intermediate statuses.** We intentionally do **not** persist Twilio's
+   transient `sending`/`queued` callback values (only `sent`/`failed`/
+   `delivered`/`undelivered` are stored, §15.4). Confirm the final-state-only
+   vocabulary is what you want on the history view.

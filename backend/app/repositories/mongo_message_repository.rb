@@ -30,6 +30,19 @@ module Repositories
       raise_repository_error("find_for_owner", e)
     end
 
+    # Bonus 3 (tech-design.md §15.3). Unknown external_sid -> nil (safe
+    # no-op, not an error) so the webhook controller can answer Twilio 200
+    # without writing anything.
+    def update_status_by_external_sid(external_sid, status)
+      document = MessageDocument.where(external_sid: external_sid).first
+      return nil if document.nil?
+
+      document.update!(status: status)
+      to_domain(document)
+    rescue Mongo::Error => e
+      raise_repository_error("update_status_by_external_sid", e)
+    end
+
     private
 
     def raise_repository_error(operation, error)

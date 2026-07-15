@@ -6,10 +6,11 @@ Method: every verdict below is based on direct inspection of the current repo
 source (not prior summaries). File paths are relative to the repo root
 (`/MySMS-Messenger`) unless noted.
 
-Scope note (client-approved): the initial pass targeted "core functionality
-only," with Bonus 1 (auth), Bonus 2 (live deploy), Bonus 3 (webhooks) all
-deferred. Bonus 1 was subsequently brought into scope and implemented (see
-below); Bonus 2 and Bonus 3 remain deferred.
+Scope note: the initial pass targeted "core functionality only," with Bonus 1
+(auth), Bonus 2 (live deploy), Bonus 3 (webhooks) all client-approved as
+deferred. **All three have since been brought into scope and implemented**
+(Bonus 1, then Bonus 2, then Bonus 3, most recently on 2026-07-15) — see each
+section below.
 
 ---
 
@@ -295,44 +296,69 @@ held up in practice with zero schema changes.
 
 ## Bonus 3 — Twilio delivery-status webhooks
 
-**Verdict: OUT OF SCOPE (client-approved), genuinely not implemented**
+**Verdict: IMPLEMENTED (brought into scope 2026-07-15 at the client's request)**
 
-- No webhook/callback controller/route exists — `backend/config/routes.rb`
-  only declares `POST/GET /api/v1/messages` and `GET /health`.
-- `MessageDocument#status` is a plain String field (`queued`/`sent`/`failed`)
-  set synchronously at send time; it is never updated afterward by any
-  inbound callback.
-- `doc/HLD.md` §8 documents the intended extension: "Add one inbound webhook
-  controller that Twilio calls; it looks up the message by [SID]..." and
-  notes the `status`/`external_sid` fields already exist as inert
-  placeholders reserved for this ("no schema migration" needed later).
-  `message_document.rb`'s own comment corroborates this independently.
-- No message card in the frontend renders any delivery-confirmation UI
-  beyond the basic `status` field being available in the API response but
-  unused by the UI — consistent with "not implemented."
-- Status: genuinely deferred, with a credible extension path (schema already
-  supports it without migration).
+- `POST /api/v1/webhooks/twilio/status` → `Api::V1::Webhooks::TwilioStatusController#create`
+  (`backend/config/routes.rb`, `backend/app/controllers/api/v1/webhooks/twilio_status_controller.rb`)
+  — a dedicated, Twilio-request-signature-authenticated endpoint, separate
+  from `MessagesController` and from the cookie-based user auth.
+- `MessageRepositoryInterface#update_status_by_external_sid(external_sid, status)`
+  added and implemented identically (in intent) by both
+  `MongoMessageRepository` and `InMemoryMessageRepository`; a non-error `nil`
+  return on an unknown SID is a deliberate safe no-op (the controller answers
+  Twilio 200 either way, so Twilio stops retrying rather than retrying a
+  message that will never exist).
+- `MessageDocument::STATUSES` expanded to
+  `%w[queued sent failed delivered undelivered]` — still a plain `String`
+  field, **no Mongoid enum, no schema migration**, exactly as `doc/HLD.md` §8
+  originally promised this extension would require. One additive, sparse
+  index (`external_sid`) supports the lookup.
+- Signature validation via `Twilio::Security::RequestValidator` (from the
+  already-present `twilio-ruby` gem); the endpoint is **disabled (503)**
+  whenever `TWILIO_AUTH_TOKEN` or `TWILIO_STATUS_CALLBACK_URL` is unset,
+  rather than ever accepting an unsigned request — there is deliberately no
+  "fake mode" bypass flag.
+- Outbound wiring: `TwilioSmsGateway#send_sms` now attaches
+  `status_callback:` when `TWILIO_STATUS_CALLBACK_URL` is configured;
+  `FakeSmsGateway` is intentionally unchanged (it never really sends, so no
+  callback would ever fire).
+- Rate-limited (`webhooks/twilio/ip`, 60/60s per IP) via the same
+  `rack-attack` mechanism as the existing send/login/signup throttles.
+- QA/security review (`doc/qa-security-review-bonus3-webhooks.md`) found one
+  real Medium-severity gap (a missing-env-var edge case that would have
+  produced an uncaught 500 instead of a clean 503) — found and fixed in the
+  same pass, with a regression test added. No Critical/High findings.
+- **Live-verification caveat (same posture as `TwilioSmsGateway` itself,
+  unchanged from before this pass):** no real Twilio credentials exist yet,
+  so this endpoint is fully implemented and tested but **unverified against
+  an actual Twilio callback**. The zero-gem Minitest suite (which does
+  execute in this sandbox) passes 48/48 (1 expected skip); the RSpec request
+  spec, gateway spec, and repository shared-example extensions are
+  hand-authored and unexecuted here, matching every other RSpec file in this
+  project (no rubygems.org access).
+- No frontend change was made or is required this pass — `status` was
+  already serialized by `MessagesController#serialize` before this change,
+  so an updated status is visible on the next `GET /api/v1/messages` with no
+  SPA code change. Rendering delivery-status in the UI is an open question
+  for the director (`tech-design.md` §15.12, Q4).
 
 ---
 
 ## GitHub push / live demo link
 
-**Verdict: NOT YET DONE (expected, sandbox constraint) — local repo is push-ready**
+**Verdict: DONE — pushed to GitHub, and the app is live on Render.**
 
-- `git remote -v` confirms `origin` is set to
-  `https://github.com/NadavGil/MySMS-Messenger.git` (both fetch/push).
-- `git log --oneline` shows a full, real commit history (20+ commits
-  spanning checkpoints, code review, QA/chaos review, security review, and
-  the test-suite migration work) — this is not a single squashed dump, it's
-  an actual incremental history.
-- `git status` shows a clean working tree (only an untracked `.idea/`
-  directory, which is IDE metadata, not project content).
-- No push has occurred — this sandbox has no GitHub credentials, matching
-  the known constraint. The client (or whoever has push access to
-  `NadavGil/MySMS-Messenger`) needs to run `git push origin master`
-  themselves.
-- No live demo link exists anywhere (README, docs) — consistent with Bonus 2
-  being deferred.
+- `origin` (`https://github.com/NadavGil/MySMS-Messenger.git`) has been
+  pushed to directly by the director (this sandbox never held credentials to
+  push itself, per the standing constraint) and reflects the full commit
+  history through the Bonus 2 Render migration and Bonus 3 webhooks work.
+- The app is live: backend at `https://mysms-messenger-server.onrender.com`,
+  frontend at `https://mysms-messenger-ehtu.onrender.com`. Signup, login,
+  send, and history were smoke-tested live and confirmed working end-to-end
+  (real bugs surfaced and fixed along the way — a Ruby-patch Docker pin, a
+  missing Node-version pin, a missing `RAILS_LOG_TO_STDOUT` wire-up, and a
+  MongoDB Atlas auth-source misconfiguration — all documented in the deploy
+  history).
 
 ---
 
@@ -349,6 +375,6 @@ held up in practice with zero schema changes.
 | 7 | Session-cookie scoping | MET |
 | 8 | Wireframe fidelity | MET |
 | Bonus 1 | Auth | IMPLEMENTED — has_secure_password, signup/login/logout/me, zero-migration owner_id reuse |
-| Bonus 2 | Live deploy | DEPLOY-READY (Render + Atlas configs built, reviewed, fixed) — blocked on director's Render account/Atlas credentials, not yet live |
-| Bonus 3 | Webhooks | OUT OF SCOPE (client-approved), not implemented, schema pre-reserves fields for it |
-| — | GitHub push + live demo link | Local repo ready, remote set, push not yet executed (no creds in sandbox); no live demo |
+| Bonus 2 | Live deploy | **LIVE** on Render (API web service + static-site frontend) + MongoDB Atlas — smoke-tested end-to-end |
+| Bonus 3 | Webhooks | IMPLEMENTED — Twilio status webhook, signature-authenticated, no schema migration; unverified against a live Twilio callback (no real credentials yet) |
+| — | GitHub push + live demo link | Pushed to GitHub; live demo running on Render |

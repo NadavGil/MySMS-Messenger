@@ -46,6 +46,16 @@ class Rack::Attack
     throttle("auth/signup/ip", limit: 10, period: 60) do |req|
       req.ip if req.post? && req.path == "/api/v1/auth/signup"
     end
+
+    # Bonus 3 (tech-design.md §15.8): coarse pre-auth abuse guard for the
+    # Twilio status webhook. Generous (60/min) since Twilio legitimately
+    # sends many callbacks; this exists to blunt abuse from non-Twilio
+    # sources hammering the endpoint before the signature check even runs -
+    # it is not the primary control (the signature is). Keyed by IP (no
+    # cookie/owner to key on here).
+    throttle("webhooks/twilio/ip", limit: 60, period: 60) do |req|
+      req.ip if req.post? && req.path == "/api/v1/webhooks/twilio/status"
+    end
   end
 
   def self.owner_id_from_signed_cookie(req)
