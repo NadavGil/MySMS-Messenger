@@ -40,10 +40,16 @@ Rails** JSON API, a **MongoDB** datastore, and an outbound integration with
 - **Testability as a first-class concern.** Both the SMS gateway and the DAL are
   dependency-injected/interface-based so unit tests substitute fakes without
   touching network or database.
-- **Clean extension path.** The remaining deferred bonus features (cloud deploy,
-  delivery-status webhooks) can be added later without reworking the core. The
-  identity abstraction built in the previous pass is being cashed in now to add
-  real authentication (Bonus 1) with no change to Message storage or scoping.
+- **Clean extension path.** The remaining deferred bonus feature
+  (delivery-status webhooks, Bonus 3) can be added later without reworking the
+  core. The identity abstraction built in the previous pass is being cashed in
+  now to add real authentication (Bonus 1) with no change to Message storage or
+  scoping.
+- **Deploy-ready by construction.** Live cloud deployment (Bonus 2) is in scope
+  this pass. Because everything is config-driven (§7.2), deploying is a matter of
+  supplying production configuration to the hosting platform — not code changes —
+  and it activates cross-origin design seams built earlier but never exercised
+  until now (see §7.5).
 
 ---
 
@@ -63,18 +69,23 @@ Rails** JSON API, a **MongoDB** datastore, and an outbound integration with
 - Message persistence in MongoDB.
 - Per-**user** ownership/scoping of the message list.
 - Outbound SMS via a swappable gateway abstraction (stub now, Twilio later).
-- Local MongoDB via `docker-compose`.
+- Local MongoDB via `docker-compose` (development); **MongoDB Atlas free tier**
+  as the managed datastore for the live deployment.
+- **Live cloud deployment** (Bonus 2): the app is deployed to **Fly.io** as two
+  separate apps (Rails API + Angular static frontend) backed by MongoDB Atlas,
+  producing a fully functional public demo URL (see §7.5).
 
 ### Explicitly deferred (intentional non-goals for this pass)
 
-| # | Bonus feature | Deferred? | Design accommodates it via… |
+| # | Bonus feature | Deferred? | Status / notes |
 |---|---|---|---|
-| **Bonus 2** | Live cloud deployment | Yes | **12-factor / config-driven** design (§7): all endpoints, secrets, and DB URIs come from env vars; containerized components. |
-| **Bonus 3** | Twilio delivery-status webhooks | Yes | The **`status` field placeholder** on the Message entity (§5) + the SMS Gateway seam (§4.4) that can later carry a callback URL and an inbound webhook controller. |
+| **Bonus 2** | Live cloud deployment | **No — now in scope** | Deployed to **Fly.io** (API + frontend as two apps) with **MongoDB Atlas** as datastore; enabled by the **12-factor / config-driven** design (§7). See §7.5 and §8. |
+| **Bonus 3** | Twilio delivery-status webhooks | Yes (only remaining deferred bonus) | The **`status` field placeholder** on the Message entity (§5) + the SMS Gateway seam (§4.4) that can later carry a callback URL and an inbound webhook controller. |
 
-(**Bonus 1 — user authentication — is no longer deferred; it is in scope this
-pass**, see §1/§2 above and §4.5.) These remaining bonuses are called out so the
-Tech Lead builds seams — not implementations — for them now.
+(**Bonus 1 — user authentication — and Bonus 2 — live cloud deployment — are no
+longer deferred; both are in scope this pass** (see §1/§2 above, §4.5, §7.5, §8).
+**Bonus 3 (webhooks) is the sole remaining deferred bonus.**) It is called out so
+the Tech Lead builds seams — not an implementation — for it now.
 
 ---
 
@@ -301,11 +312,15 @@ endpoints and two message endpoints:
   identity is ever minted.
 - Auth session cookie is **signed/HttpOnly** and, in deployed environments,
   `Secure` + appropriate `SameSite`.
-- **CORS** restricted to the known SPA origin(s) via config.
+- **CORS** restricted to the known SPA origin(s) via the `CORS_ORIGINS` config
+  variable, which in the live deployment **must** be set to the real deployed
+  frontend origin (the Fly.io web app URL) — not `localhost` — via platform
+  config.
 - Server-side input validation (phone format, ≤250 chars, username/password
   rules) — client validation is UX only.
-- Secrets (Twilio credentials, cookie signing key) are never committed; supplied
-  via env vars.
+- Secrets (`SECRET_KEY_BASE`, `MONGO_URI`, `CROSS_ORIGIN_COOKIES`, and any Twilio
+  credentials) are **never committed and never baked into a Docker image layer**;
+  they are supplied via the hosting platform's secret store (Fly.io secrets).
 - Scoping by `owner_id` (now a `User` id) prevents one user from reading
   another user's messages.
 
@@ -320,23 +335,66 @@ endpoints and two message endpoints:
 - MongoDB scaling (replica set / Atlas tier) is an infrastructure/config concern,
   isolated behind the DAL.
 
+### 7.5 Production deployment topology (Bonus 2)
+
+The live demo runs on **Fly.io** with **MongoDB Atlas** as the datastore. Three
+independently managed pieces:
+
+- **Rails API app** — one Fly.io app running the API-only Rails image
+  (e.g. `mysms-api.fly.dev`).
+- **Angular frontend app** — a separate Fly.io app serving the static SPA build
+  (e.g. `mysms-web.fly.dev`). API and frontend are deployed as **separate Fly
+  apps** because they are different runtimes / build outputs.
+- **MongoDB Atlas (free tier)** — a managed database, **decoupled from app
+  hosting**; the API reaches it via `MONGO_URI` (§7.2). Local `docker-compose`
+  Mongo remains for development only.
+
+**Genuine cross-origin deployment.** The API and frontend almost certainly live
+on **different subdomains** (`mysms-api.fly.dev` vs `mysms-web.fly.dev`), so the
+SPA-to-API auth cookie is now a **real cross-site cookie**. This is *exactly* the
+scenario `CurrentIdentity`'s existing **`CROSS_ORIGIN_COOKIES`** env flag
+(which sets the auth cookie to `SameSite=None; Secure`) was built for in the
+earlier pass and **never activated until now** — flipping it on in production is
+the real payoff of that earlier design decision, **not new design debt**.
+
+**HTTPS is mandatory** in this topology. Fly.io terminates TLS by default, and
+`config.force_ssl = true` is already set in `production.rb`, so all traffic is
+HTTPS end-to-end — which is also a precondition for the `Secure` cookie above.
+
+**Secrets** (`SECRET_KEY_BASE`, `MONGO_URI`, `CROSS_ORIGIN_COOKIES`, plus Twilio
+credentials if/when supplied) are set through the Fly.io secret store — never
+committed to the repo, never baked into a Docker image layer (§7.3).
+
+**SMS stays on the fake gateway in production.** No real Twilio credentials have
+been supplied, so the demo runs with the **Stub SMS gateway**. `SMS_PROVIDER`
+already **defaults to the fake gateway** and is **config-only** to flip later
+(§4.4); **no code assumes real Twilio**, so the live demo is fully functional
+end-to-end without sending real SMS.
+
+**CORS** (`CORS_ORIGINS`) is set on the API to the deployed frontend origin
+(`mysms-web.fly.dev`), not `localhost` (§7.3).
+
 ---
 
 ## 8. Extension to Remaining Deferred Bonuses (without major rework)
 
-> Bonus 1 (user authentication) is now implemented in this pass — see §4.5, §5,
-> §6, §7.3. The two bonuses below remain deferred.
+> Bonus 1 (user authentication) and Bonus 2 (live cloud deployment) are now
+> implemented in this pass — see §4.5, §5, §6, §7.3 (auth) and §7.5 (deploy).
+> **Bonus 3 below is the only remaining deferred bonus.**
 
-### Bonus 2 — Live cloud deployment
+### Bonus 2 — Live cloud deployment (now in scope, see §7.5)
 
-- Components are already containerizable (Angular static build, Rails API image,
-  Mongo container/Atlas).
-- Because everything is config-driven (§7.2), deploying means providing
-  production env values (Mongo URI → Atlas, `SMS_PROVIDER=twilio` + credentials,
-  CORS origin, secure cookie flags, cookie signing secret) — not code changes.
-- CI/CD can build the two images and deploy behind a load balancer.
+- Delivered via **Fly.io** (Rails API + Angular static frontend as two separate
+  apps) with **MongoDB Atlas (free tier)** as the datastore — full topology in
+  §7.5.
+- Because everything is config-driven (§7.2), deploying is providing production
+  configuration (Mongo URI → Atlas, secure/cross-origin cookie flags via
+  `CROSS_ORIGIN_COOKIES`, `CORS_ORIGINS` → the frontend origin, `SECRET_KEY_BASE`)
+  — **not code changes**. `SMS_PROVIDER` keeps its fake default for the demo.
+- Dockerfiles, `fly.toml`, and CI/CD wiring are the Tech Lead's / dev team's
+  deliverables; this HLD fixes the architecture and configuration surface only.
 
-### Bonus 3 — Twilio delivery-status webhooks
+### Bonus 3 — Twilio delivery-status webhooks (only remaining deferred bonus)
 
 - The Message entity already has `status` and `provider_message_id` placeholders.
 - When sending, pass a status-callback URL to the `TwilioSmsGateway`.
@@ -379,6 +437,13 @@ endpoints and two message endpoints:
   use (SMS incurs cost and has deliverability nuances).
 - **Cost/abuse exposure** once real sending is enabled — mitigated by
   authentication (now in scope) plus rate limiting on send.
+- **Deployment risk (first real deploy).** This is the **first time the app runs
+  anywhere the sandbox that built it could not reach** — `rubygems.org` was
+  blocked in that build environment throughout — so some environment-specific
+  surprises (dependency fetch, image build, Atlas connectivity, cookie/CORS
+  behavior across the two Fly apps) are possible on the first real deploy. Same
+  pattern as the earlier live local run; mitigated by the config-driven design
+  and by treating the first deploy as a shakeout.
 - **Pre-existing anonymous messages** created before this change carry an
   `owner_id` that is a session UUID rather than a real `User` id, so they will
   not be visible to any account. This is a **known one-time data consideration**;
