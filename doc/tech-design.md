@@ -131,15 +131,19 @@ backend/
 - Gateways live in module `Gateways::`.
 - Services live in module `Services::`.
 - Domain value object: `Domain::Message`.
-- Autoload maps `app/repositories` → `Repositories`, etc. Add to
-  `config/application.rb`:
-  ```ruby
-  # Rails already autoloads app/* ; for module-nesting-by-folder use:
-  # (default Zeitwerk expects Repositories::Foo in app/repositories/foo.rb) ✔ works out of the box
-  ```
-  No extra config needed — Zeitwerk maps `app/repositories/mongo_message_repository.rb`
-  to `Repositories::MongoMessageRepository` automatically because `app/repositories`
-  is an autoload root and the module name matches the folder.
+- **CORRECTION (post-live-run audit — this section was wrong and caused a
+  real bug):** this is *not* automatic. Rails adds every direct
+  subdirectory of `app/` as its own Zeitwerk autoload root mapped to the
+  **top-level** namespace by default — `app/repositories/mongo_message_repository.rb`
+  autoloads as bare top-level `MongoMessageRepository`, not
+  `Repositories::MongoMessageRepository`, unless told otherwise. This was
+  only discovered once Rails could actually boot outside the sandbox that
+  built this app (the sandbox's rubygems.org access was blocked the whole
+  time, so Rails never booted there at all). `config/application.rb` now
+  explicitly removes the default unnamespaced autoload roots for
+  `app/domain`, `app/repositories`, `app/gateways`, `app/services` and
+  re-registers each via `Rails.autoloaders.main.push_dir(dir, namespace:)`,
+  which is the documented, correct way to get folder-name namespacing.
 
 ### 2.6 Inversion of Control — the container (initializer)
 
