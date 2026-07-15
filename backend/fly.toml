@@ -4,10 +4,10 @@
 #
 #   fly secrets set SECRET_KEY_BASE="$(bin/rails secret)" -a mysms-messenger-api
 #   fly secrets set MONGO_URI="mongodb+srv://USER:PASS@CLUSTER.mongodb.net/mysms_production?retryWrites=true&w=majority" -a mysms-messenger-api
-#   fly secrets set CORS_ORIGINS="https://mysms-messenger-web.fly.dev" -a mysms-messenger-api
 #
-# (CORS_ORIGINS may instead be set in [env] below since it is not truly
-# secret — either mechanism works, tech-design.md §14.2.)
+# CORS_ORIGINS is set directly in [env] below (not truly secret — it's just
+# the public frontend URL) — update it there if the real frontend domain
+# differs from the placeholder.
 # ---------------------------------------------------------------------------
 
 app = "mysms-messenger-api"      # PLACEHOLDER — director sets real name
@@ -23,6 +23,13 @@ primary_region = "iad"            # PLACEHOLDER — pick region near Atlas clust
   CROSS_ORIGIN_COOKIES = "true"   # genuinely cross-origin: SPA and API on different subdomains
   RAILS_LOG_TO_STDOUT = "true"    # Fly captures stdout; ensure logs are visible
   PORT = "8080"                   # matches internal_port + Dockerfile bind
+  # Not truly secret (it's just the public frontend URL), set directly here
+  # rather than via `fly secrets set` — but as of the CORS security fix
+  # (config/initializers/cors.rb), this is now REQUIRED in production: the
+  # app raises loudly at boot if it's missing, rather than silently
+  # falling back to a useless localhost origin. Update this if the real
+  # frontend app name/domain differs from the placeholder.
+  CORS_ORIGINS = "https://mysms-messenger-web.fly.dev"
 
 [http_service]
   internal_port = 8080            # MUST equal the Dockerfile bound port
@@ -30,6 +37,13 @@ primary_region = "iad"            # PLACEHOLDER — pick region near Atlas clust
   auto_stop_machines = true
   auto_start_machines = true
   min_machines_running = 0        # free-tier friendly; first request cold-starts
+  # CAVEAT (qa-security-review-bonus2-deploy.md, Medium finding): rack-attack
+  # (config/initializers/rack_attack.rb) uses the default per-process
+  # in-memory cache store, so its rate limits are per-machine, not
+  # global. Fine at 1 machine; if this is ever scaled to run more than one
+  # concurrent machine, either cap `max_machines_running = 1` explicitly or
+  # move rack-attack to a shared store (e.g. Redis) first, or the send/
+  # login/signup throttles silently multiply per machine.
 
   [[http_service.checks]]
     method = "GET"
