@@ -7,6 +7,12 @@ Rails.application.routes.draw do
       # matches the locked §6 API contract and does not require the
       # controller to exist until a request actually hits it.
       resources :messages, only: [:create, :index]
+
+      # Bonus 1 authentication (tech-design.md §13.5).
+      post   "auth/signup", to: "auth#signup"
+      post   "auth/login",  to: "auth#login"
+      delete "auth/logout", to: "auth#logout"
+      get    "auth/me",     to: "auth#me"
     end
   end
 end

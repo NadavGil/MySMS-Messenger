@@ -9,7 +9,7 @@ Rails.application.config.middleware.insert_before 0, Rack::Cors do
 
     resource "/api/*",
       headers: :any,
-      methods: [:get, :post, :options],
+      methods: [:get, :post, :delete, :options], # :delete for DELETE /api/v1/auth/logout (tech-design.md §13.5)
       credentials: true
   end
 end
