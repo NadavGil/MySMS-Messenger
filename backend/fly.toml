@@ -1,0 +1,39 @@
+# ---------------------------------------------------------------------------
+# Fly secrets the DIRECTOR must set before/at deploy time (never commit these
+# values; placeholders shown below — see tech-design.md §14.2 / §14.7):
+#
+#   fly secrets set SECRET_KEY_BASE="$(bin/rails secret)" -a mysms-messenger-api
+#   fly secrets set MONGO_URI="mongodb+srv://USER:PASS@CLUSTER.mongodb.net/mysms_production?retryWrites=true&w=majority" -a mysms-messenger-api
+#   fly secrets set CORS_ORIGINS="https://mysms-messenger-web.fly.dev" -a mysms-messenger-api
+#
+# (CORS_ORIGINS may instead be set in [env] below since it is not truly
+# secret — either mechanism works, tech-design.md §14.2.)
+# ---------------------------------------------------------------------------
+
+app = "mysms-messenger-api"      # PLACEHOLDER — director sets real name
+primary_region = "iad"            # PLACEHOLDER — pick region near Atlas cluster
+
+[build]
+  # uses the Dockerfile in this directory (backend/)
+
+[env]
+  RAILS_ENV = "production"
+  MESSAGE_REPOSITORY = "mongo"
+  SMS_PROVIDER = "fake"           # no Twilio creds this pass
+  CROSS_ORIGIN_COOKIES = "true"   # genuinely cross-origin: SPA and API on different subdomains
+  RAILS_LOG_TO_STDOUT = "true"    # Fly captures stdout; ensure logs are visible
+  PORT = "8080"                   # matches internal_port + Dockerfile bind
+
+[http_service]
+  internal_port = 8080            # MUST equal the Dockerfile bound port
+  force_https = true              # Fly proxy redirects http->https at the edge
+  auto_stop_machines = true
+  auto_start_machines = true
+  min_machines_running = 0        # free-tier friendly; first request cold-starts
+
+  [[http_service.checks]]
+    method = "GET"
+    path = "/health"
+    interval = "15s"
+    timeout = "2s"
+    grace_period = "10s"          # allow Rails boot before first check
