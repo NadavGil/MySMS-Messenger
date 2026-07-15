@@ -23,6 +23,24 @@ with what the Tech Lead specified. One real Medium-severity gap (M1, below)
 was found during this review and fixed immediately, with a regression test
 added to prove it and prevent recurrence. No Critical or High findings.
 
+**UPDATE (2026-07-15, post-deploy): live-verified against the real deployed
+backend**, not just unit tests. `backend/script/test_webhook.sh` signed up a
+real user, sent a real message via the live app
+(`https://mysms-messenger-server.onrender.com`), built a genuinely valid
+`X-Twilio-Signature` (Twilio's documented HMAC-SHA1 algorithm, computed with
+`openssl`, entirely independent of this app's own implementation of the
+same check), and posted it to the live `/api/v1/webhooks/twilio/status`
+endpoint. Result: `HTTP/2 200`, and the message's `status` field changed
+from `sent` to `delivered` on the very next `GET /api/v1/messages` — full
+signature-validate → SID-lookup → status-update path confirmed working
+against the actual running production deployment (Render + MongoDB Atlas),
+not a test double. **What remains unverified is specifically
+Twilio-originated traffic** (a real Twilio account calling this URL itself)
+— that still requires real Twilio credentials, per §15.12 Q2. The
+signature-validation logic itself, however, is no longer merely
+unit-tested; it has been proven correct end-to-end with an independently
+computed valid signature against production.
+
 The zero-gem Minitest suite (`ruby test/run_all.rb`) executes in this sandbox
 and passes: **48 runs, 127 assertions, 0 failures, 0 errors, 1 skip** (the
 skip is the `MessageDocument`/Mongoid-dependent test, which cannot load

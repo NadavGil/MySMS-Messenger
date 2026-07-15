@@ -158,9 +158,13 @@ Twilio webhook: `POST /api/v1/webhooks/twilio/status` →
   not persisted as status changes.
 - Idempotent by design: a duplicate callback for the same message is a
   harmless repeat update, not a bug.
-- Same as `TwilioSmsGateway` itself: **implemented and unit-tested, but
-  unverified against a live Twilio callback**, since no real Twilio
-  credentials exist yet. Once credentials are supplied, set
+- **Live-verified end-to-end** using `backend/script/test_webhook.sh`
+  (below): a real message sent through the live app, a genuinely valid
+  signature built independently with `openssl`, posted to the live
+  endpoint — result: `200 OK`, and the message's status flipped from `sent`
+  to `delivered`. What's still unverified is specifically genuine
+  Twilio-originated traffic (same standing caveat `TwilioSmsGateway` itself
+  already carries) — that needs real Twilio credentials. Once supplied, set
   `TWILIO_STATUS_CALLBACK_URL` to this deployed backend's public URL, e.g.
   `https://mysms-messenger-server.onrender.com/api/v1/webhooks/twilio/status`,
   and the whole path lights up with no further code changes.

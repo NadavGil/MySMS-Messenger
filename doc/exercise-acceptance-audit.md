@@ -328,14 +328,23 @@ held up in practice with zero schema changes.
   real Medium-severity gap (a missing-env-var edge case that would have
   produced an uncaught 500 instead of a clean 503) — found and fixed in the
   same pass, with a regression test added. No Critical/High findings.
-- **Live-verification caveat (same posture as `TwilioSmsGateway` itself,
-  unchanged from before this pass):** no real Twilio credentials exist yet,
-  so this endpoint is fully implemented and tested but **unverified against
-  an actual Twilio callback**. The zero-gem Minitest suite (which does
-  execute in this sandbox) passes 48/48 (1 expected skip); the RSpec request
-  spec, gateway spec, and repository shared-example extensions are
-  hand-authored and unexecuted here, matching every other RSpec file in this
-  project (no rubygems.org access).
+- **Live-verified end-to-end (2026-07-15, post-deploy).** Using
+  `backend/script/test_webhook.sh`, a real message was sent through the live
+  app (`https://mysms-messenger-server.onrender.com`), a genuinely valid
+  `X-Twilio-Signature` was built independently with `openssl` (Twilio's
+  published HMAC-SHA1 algorithm), and posted to the live webhook endpoint:
+  result `HTTP/2 200`, and the message's `status` changed from `sent` to
+  `delivered` on the next `GET /api/v1/messages` — the full
+  signature-validate → SID-lookup → status-update path is confirmed working
+  against the actual running production deployment, not just unit tests.
+  **What remains unverified is specifically genuine Twilio-originated
+  traffic** (a real Twilio account calling this URL itself), which still
+  needs real Twilio credentials — same standing caveat `TwilioSmsGateway`
+  itself already carries. The zero-gem Minitest suite (which does execute in
+  this sandbox) passes 48/48 (1 expected skip); the RSpec request spec,
+  gateway spec, and repository shared-example extensions are hand-authored
+  and unexecuted here, matching every other RSpec file in this project (no
+  rubygems.org access).
 - No frontend change was made or is required this pass — `status` was
   already serialized by `MessagesController#serialize` before this change,
   so an updated status is visible on the next `GET /api/v1/messages` with no
@@ -376,5 +385,5 @@ held up in practice with zero schema changes.
 | 8 | Wireframe fidelity | MET |
 | Bonus 1 | Auth | IMPLEMENTED — has_secure_password, signup/login/logout/me, zero-migration owner_id reuse |
 | Bonus 2 | Live deploy | **LIVE** on Render (API web service + static-site frontend) + MongoDB Atlas — smoke-tested end-to-end |
-| Bonus 3 | Webhooks | IMPLEMENTED — Twilio status webhook, signature-authenticated, no schema migration; unverified against a live Twilio callback (no real credentials yet) |
+| Bonus 3 | Webhooks | IMPLEMENTED, **live-verified** — Twilio status webhook, signature-authenticated, no schema migration; end-to-end path confirmed working against the live deployment via a genuinely-signed simulated callback; genuine Twilio-originated traffic still untested pending real credentials |
 | — | GitHub push + live demo link | Pushed to GitHub; live demo running on Render |
