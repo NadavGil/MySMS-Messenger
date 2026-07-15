@@ -1,0 +1,38 @@
+<form class="auth-form" [formGroup]="form" (ngSubmit)="onSubmit()">
+  <label class="field">
+    <span class="field-label">Username</span>
+    <input
+      type="text"
+      class="username-input"
+      formControlName="username"
+      autocomplete="username"
+      aria-label="Username"
+    />
+  </label>
+
+  <label class="field">
+    <span class="field-label">Password</span>
+    <input
+      type="password"
+      class="password-input"
+      formControlName="password"
+      autocomplete="current-password"
+      aria-label="Password"
+    />
+  </label>
+
+  @if (errorMessage) {
+    <p class="error-message" role="alert">{{ errorMessage }}</p>
+  }
+
+  <div class="actions">
+    <button type="submit" class="submit-button" [disabled]="form.invalid || submitting">
+      Log In
+    </button>
+  </div>
+
+  <p class="switch-link">
+    Don't have an account?
+    <a href="javascript:void(0)" (click)="switchToSignup.emit()">Sign up</a>
+  </p>
+</form>

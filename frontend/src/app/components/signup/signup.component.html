@@ -1,0 +1,40 @@
+<form class="auth-form" [formGroup]="form" (ngSubmit)="onSubmit()">
+  <label class="field">
+    <span class="field-label">Username</span>
+    <input
+      type="text"
+      class="username-input"
+      formControlName="username"
+      autocomplete="username"
+      aria-label="Username"
+      placeholder="3-30 chars: letters, digits, underscore"
+    />
+  </label>
+
+  <label class="field">
+    <span class="field-label">Password</span>
+    <input
+      type="password"
+      class="password-input"
+      formControlName="password"
+      autocomplete="new-password"
+      aria-label="Password"
+      placeholder="8+ characters"
+    />
+  </label>
+
+  @if (errorMessage) {
+    <p class="error-message" role="alert">{{ errorMessage }}</p>
+  }
+
+  <div class="actions">
+    <button type="submit" class="submit-button" [disabled]="form.invalid || submitting">
+      Sign Up
+    </button>
+  </div>
+
+  <p class="switch-link">
+    Already have an account?
+    <a href="javascript:void(0)" (click)="switchToLogin.emit()">Log in</a>
+  </p>
+</form>

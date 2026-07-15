@@ -7,12 +7,38 @@
 .app-header {
   padding: 1rem 1.5rem;
   border-bottom: 2px solid #1a1a1a;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: 0.5rem;
 }
 
 .app-header h1 {
   margin: 0;
   font-size: 1.5rem;
   letter-spacing: 0.05em;
+}
+
+.auth-status {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+  font-size: 0.9rem;
+}
+
+.auth-username {
+  font-weight: bold;
+}
+
+.logout-link {
+  color: #1a1a1a;
+  text-decoration: underline;
+  cursor: pointer;
+}
+
+.auth-panels {
+  padding: 1.5rem;
 }
 
 .panels {

@@ -1,0 +1,64 @@
+.auth-form {
+  display: flex;
+  flex-direction: column;
+  gap: 0.75rem;
+  max-width: 320px;
+  margin: 2rem auto;
+}
+
+.field {
+  display: flex;
+  flex-direction: column;
+  gap: 0.25rem;
+}
+
+.field-label {
+  font-weight: bold;
+  font-size: 0.9rem;
+}
+
+.username-input,
+.password-input {
+  font: inherit;
+  padding: 0.5rem;
+  border: 1px solid #999;
+  border-radius: 4px;
+  box-sizing: border-box;
+  width: 100%;
+}
+
+.error-message {
+  color: #b00020;
+  font-size: 0.9rem;
+}
+
+.actions {
+  display: flex;
+  justify-content: flex-end;
+}
+
+.submit-button {
+  background: #000;
+  color: #fff;
+  border: none;
+  border-radius: 4px;
+  padding: 0.5rem 1.5rem;
+  cursor: pointer;
+  font: inherit;
+}
+
+.submit-button:disabled {
+  background: #999;
+  cursor: not-allowed;
+}
+
+.switch-link {
+  text-align: center;
+  font-size: 0.9rem;
+}
+
+.switch-link a {
+  color: #333;
+  text-decoration: underline;
+  cursor: pointer;
+}

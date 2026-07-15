@@ -1,14 +1,33 @@
 <header class="app-header">
   <h1>{{ title }}</h1>
+
+  @if (user$ | async; as user) {
+    <div class="auth-status">
+      <span class="auth-username">{{ user.username }}</span>
+      <a class="logout-link" href="javascript:void(0)" (click)="onLogout()">Logout</a>
+    </div>
+  }
 </header>
 
-<main class="panels">
-  <section class="panel panel--new-message" aria-label="New Message">
-    <h2>New Message</h2>
-    <app-new-message></app-new-message>
-  </section>
+@if (checked$ | async) {
+  @if (loggedIn$ | async) {
+    <main class="panels">
+      <section class="panel panel--new-message" aria-label="New Message">
+        <h2>New Message</h2>
+        <app-new-message></app-new-message>
+      </section>
 
-  <section class="panel panel--history" aria-label="Message History">
-    <app-message-history></app-message-history>
-  </section>
-</main>
+      <section class="panel panel--history" aria-label="Message History">
+        <app-message-history></app-message-history>
+      </section>
+    </main>
+  } @else {
+    <main class="auth-panels">
+      @if (showSignup) {
+        <app-signup (switchToLogin)="onSwitchToLogin()"></app-signup>
+      } @else {
+        <app-login (switchToSignup)="onSwitchToSignup()"></app-login>
+      }
+    </main>
+  }
+}
