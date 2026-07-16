@@ -1,0 +1,232 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>MySMS Messenger — From Prompt to Production</title>
+<style>
+  :root{
+    --bg:#0f1220; --panel:#171b30; --panel2:#1d2240; --line:#2a2f52;
+    --ink:#eef0fb; --muted:#9aa0c3; --accent:#7c8cff; --accent2:#33d6a6;
+    --warn:#ffb454; --danger:#ff6b81; --opus:#c084fc;
+  }
+  *{box-sizing:border-box;}
+  body{margin:0;background:radial-gradient(1200px 800px at 10% -10%, #1b2040 0%, var(--bg) 60%);
+    color:var(--ink); font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Helvetica,Arial,sans-serif; padding:32px 24px 60px;}
+  .wrap{max-width:1180px;margin:0 auto;}
+  header{text-align:center;margin-bottom:36px;}
+  header h1{font-size:30px;margin:0 0 8px;letter-spacing:.3px;}
+  header p{color:var(--muted);margin:0;font-size:15px;}
+  .badges{display:flex;gap:10px;justify-content:center;flex-wrap:wrap;margin-top:14px;}
+  .badge{display:inline-block;background:var(--panel2);border:1px solid var(--line);color:var(--accent2);
+    padding:3px 10px;border-radius:20px;font-size:12px;}
+  .badge.live{color:var(--accent);}
+
+  h2.section{font-size:18px;margin:0 0 18px;color:var(--ink);display:flex;align-items:center;gap:10px;}
+  h2.section:before{content:"";width:6px;height:6px;border-radius:50%;background:var(--accent);}
+  section{margin-bottom:48px;}
+
+  .prompt-card{background:var(--panel);border:1px solid var(--line);border-radius:16px;padding:22px 24px;position:relative;margin-bottom:18px;}
+  .prompt-card:before{content:"\201C";position:absolute;top:-6px;left:18px;font-size:64px;color:var(--accent);opacity:.35;font-family:Georgia,serif;}
+  .prompt-card h3{margin:6px 0 10px;font-size:16px;}
+  .prompt-card p{color:var(--muted);font-size:13.5px;line-height:1.6;margin:0 0 10px;}
+  .prompt-card ul{color:var(--muted);font-size:13.5px;line-height:1.6;margin:0 0 10px;padding-left:20px;}
+  .prompt-card .bonus{border-left:3px solid var(--accent2);padding:8px 0 8px 12px;margin:10px 0;background:var(--panel2);border-radius:0 8px 8px 0;}
+  .prompt-card .bonus b{color:var(--accent2);}
+  .prompt-card .source{margin-top:14px;font-size:11.5px;color:var(--muted);text-align:right;}
+  .prompt-card.director{border-color:var(--accent);box-shadow:0 0 0 1px rgba(124,140,255,.15);}
+  .prompt-card.director h3{color:var(--accent);}
+  .prompt-card.spec-card{padding:18px 22px;opacity:.92;}
+  .prompt-card.spec-card:before{font-size:48px;}
+  .wireframe{max-width:100%;border-radius:10px;border:1px solid var(--line);margin:10px 0;display:block;}
+
+  .timeline{position:relative;margin:0 0 20px;padding-left:26px;}
+  .timeline:before{content:"";position:absolute;left:9px;top:6px;bottom:6px;width:2px;background:var(--line);}
+  .phase{position:relative;margin-bottom:16px;background:var(--panel);border:1px solid var(--line);border-radius:12px;padding:14px 16px;}
+  .phase:before{content:"";position:absolute;left:-23px;top:18px;width:12px;height:12px;border-radius:50%;
+    background:var(--dot,var(--accent));box-shadow:0 0 0 4px rgba(124,140,255,.15);}
+  .phase .row{display:flex;justify-content:space-between;align-items:baseline;flex-wrap:wrap;gap:6px;}
+  .phase .who{font-weight:600;font-size:14.5px;}
+  .phase .tag{font-size:10.5px;background:var(--panel2);border:1px solid var(--line);color:var(--muted);
+    padding:2px 8px;border-radius:20px;}
+  .phase p{margin:8px 0 0;color:var(--muted);font-size:13px;line-height:1.5;}
+  .phase.gate{border-left:3px solid var(--danger);} .phase.gate:before{--dot:var(--danger);}
+  .phase.fix{border-left:3px solid var(--warn);} .phase.fix:before{--dot:var(--warn);}
+  .phase.pass{border-left:3px solid var(--accent2);} .phase.pass:before{--dot:var(--accent2);}
+  .phase.gap{border-left:3px solid var(--opus);} .phase.gap:before{--dot:var(--opus);}
+
+  .diagram-wrap{background:var(--panel);border:1px solid var(--line);border-radius:16px;padding:20px;overflow-x:auto;}
+  .diagram-wrap .mermaid{display:flex;justify-content:center;}
+  .diagram-note{color:var(--muted);font-size:12.5px;margin-top:12px;text-align:center;}
+
+  .metrics{display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:14px;}
+  .metric{background:var(--panel);border:1px solid var(--line);border-radius:14px;padding:16px;text-align:center;}
+  .metric .num{font-size:24px;font-weight:700;color:var(--accent2);}
+  .metric .lbl{font-size:11.5px;color:var(--muted);margin-top:4px;}
+
+  footer{text-align:center;color:var(--muted);font-size:12px;margin-top:20px;}
+  footer a{color:var(--accent);}
+</style>
+</head>
+<body>
+<div class="wrap">
+
+  <header>
+    <h1>MySMS Messenger — From Prompt to Production</h1>
+    <p>The full journey: one exercise spec in, a live, tested, security-reviewed app out.</p>
+    <div class="badges">
+      <span class="badge">github.com/NadavGil/MySMS-Messenger</span>
+      <span class="badge live">mysms-messenger-ehtu.onrender.com</span>
+    </div>
+  </header>
+
+  <section>
+    <h2 class="section">The Prompt That Started It All</h2>
+    <div class="prompt-card director">
+      <h3>Nadav's kickoff message — the actual first prompt</h3>
+      <p>"I am an Cityhive director. Looking to implement a MySMS Messenger."</p>
+      <p>"You will create a scrum team in the form of several Claude agents. We will have an architect, who will create an HLD. A tech lead who will write the tech design. Then we will have a testing specialist who will make sure to QA the system, in every deliverable. The QA specialist is also a chaos engineer who will try to break the design/system. A security specialist will look for vulnerabilities. A team lead will also be a scrum master, and will create scrum user stories, and assign them to a developer. We will have one senior developer and one junior, implementing the backend code And a senior frontend implementing the frontend code."</p>
+      <p>"Each story completed, will be handed to the QA agent. And the developer will go and fetch more work from the lead. Planning (by architect and by tech lead) will be on Opus. Other agents will be running on Sonnet. You will implement the team lead as a workflow, fanning out concurrent tasks, whenever possible to parallelize. Assigning to either one of the developers, based on task complexity."</p>
+      <p>"Based on the tech design, checkpoints will be defined, each checkpoint will be pushed into git, so that we have multiple small commits, and not just one large at the end. I want the code to be testable. i.e. implement IoC for e.g. the DAL, so that a client can decide to swap to a different DB, with just a config change. Plus, DAL and IoC will yield testable code."</p>
+      <p>"When code complete, you will do the following loop engineering: system-wide CR → fix all findings → loop till nothing found in CR. The loop engineering will be capped at $300."</p>
+      <p>"It would be very interesting to see a sequence diagram with interactions between the agents. Create an infographic HTML to show the teamwork messages and collaboration. HTML as well as the HLD and design document will go under /doc in git."</p>
+      <p>"For any blockers, ping me, so I can decide how to unblock."</p>
+      <div class="source">Quoted verbatim — this is what actually kicked the whole project off, before a single line of the app existed.</div>
+    </div>
+
+    <div class="prompt-card spec-card">
+      <h3>The attached exercise spec — MySMS Messenger (CityHive)</h3>
+      <p>"A full stack web app allowing the end users to send SMS messages as well as displaying them."</p>
+      <ul>
+        <li>Frontend in Angular's latest stable version</li>
+        <li>Backend (API) in Ruby on Rails with MongoDB as the database</li>
+        <li>Sending an SMS through the Twilio API, on a free account</li>
+      </ul>
+      <p style="margin-top:14px;"><b style="color:var(--ink);">Core functionality requested:</b> send a message via the backend API; store sent messages in a DB the backend manages; list previously-sent messages via a listing endpoint; only messages sent by the caller's session should be visible.</p>
+      <img class="wireframe" src="https://s3.us-west-2.amazonaws.com/assets.cityhive.net/MySMS-Messenger/mysmsmessengerwireframe.png" alt="Original MySMS Messenger wireframe: two side-by-side panels, New Message and Message History" loading="lazy">
+      <div class="bonus"><b>Bonus 1</b> — swap the session-ID scoping for real user accounts (signup/login/logout), using a built-in/well-known auth mechanism, never hand-rolled.</div>
+      <div class="bonus"><b>Bonus 2</b> — deploy the app: a live, fully-functional demo.</div>
+      <div class="bonus"><b>Bonus 3</b> — "Add a reflection to the message cards showing that twilio successfully delivered the message," via Twilio's status-callback webhooks.</div>
+      <p style="margin-top:14px;">"Once done, push your code to a public GitHub repo along with a link to the live demo."</p>
+      <div class="source">This is the product spec the director attached — the actual requirements handed to the simulated Architect.</div>
+    </div>
+  </section>
+
+  <section>
+    <h2 class="section">The Journey</h2>
+    <div class="timeline">
+
+      <div class="phase"><div class="row"><span class="who">Core build</span><span class="tag">simulated scrum team</span></div>
+        <p>Architect (HLD) → Tech Lead (tech design + CP1–CP12 checkpoint plan) → Scrum Master fanning work out to senior/junior backend + senior frontend devs, in parallel where possible. Two IoC seams designed in from day one: a repository interface (Mongo swappable for an in-memory fake) and an SMS-gateway interface (Twilio swappable for a fake) — the seams that later made every bonus a config change, not a rewrite.</p></div>
+
+      <div class="phase gate"><div class="row"><span class="who">QA + Security, round 1</span><span class="tag">1 Blocker · 5 Major · 1 High · 5 Medium</span></div>
+        <p>Adversarial review of every checkpoint before code review even started — caught a repo-state bug, a cookie SameSite gap, a double-API-prefix bug, and no rate limiting, among others.</p></div>
+
+      <div class="phase fix"><div class="row"><span class="who">Fix round</span><span class="tag">8/8 verified fixed</span></div>
+        <p>All round-1 findings fixed and independently re-verified against real code, not just re-read.</p></div>
+
+      <div class="phase pass"><div class="row"><span class="who">Code review loop</span><span class="tag">2 iterations → PASS, ≪ $300 cap</span></div>
+        <p>System-wide review found unsafe param coercion and zero service/gateway/repo specs on iteration 1; both fixed; iteration 2 passed clean.</p></div>
+
+      <div class="phase"><div class="row"><span class="who">Live sandbox run</span><span class="tag">post-build bug hunt</span></div>
+        <p>Ran the whole stack end-to-end for real, then did a dedicated post-run bug hunt and refactor pass before calling core scope done.</p></div>
+
+      <div class="phase"><div class="row"><span class="who">Bonus 1 — Authentication</span><span class="tag">HLD → design → build → QA/security</span></div>
+        <p><code>has_secure_password</code> (bcrypt), signed HttpOnly identity cookie, username case-normalized both app- and DB-index-side, timing-safe login (a dummy bcrypt compare on a miss, to close a username-enumeration side channel).</p></div>
+
+      <div class="phase"><div class="row"><span class="who">Bonus 2 — Live deployment</span><span class="tag">Render + MongoDB Atlas</span></div>
+        <p>Switched from an initial Fly.io plan (card required, no real free tier) to Render (genuinely free, no card). Two independent services — Static Site + Docker Web Service — on different subdomains, so the auth cookie became a real cross-site cookie; the <code>CROSS_ORIGIN_COOKIES</code> flag designed in during Bonus 1, unused until now, is what made that a config flip instead of new work.</p></div>
+
+      <div class="phase"><div class="row"><span class="who">Bonus 3 — Twilio delivery-status webhooks</span><span class="tag">signature-authenticated, live-verified</span></div>
+        <p>Inbound webhook authenticated by Twilio's own HMAC-SHA1 request signature — not the user cookie, since Twilio can't hold one. Verified against the live deployment by hand-building a genuinely valid signature with <code>openssl</code> and confirming a real message's status flipped <code>sent → delivered</code>.</p></div>
+
+      <div class="phase fix"><div class="row"><span class="who">Bug blitz, two passes</span><span class="tag">1 High · 2 Medium · 3 Low, all closed</span></div>
+        <p>A systematic cross-cutting re-review after every bonus was live. Found and fixed: a message-history store never cleared on logout (cross-user leak risk on a shared browser); SMS content leaking into request logs; an unhandled 500 on a rare signup race; a stale/failing frontend test; <code>render.yaml</code> drift from the real deploy; an unbounded message-history query (now capped); a Twilio webhook with no ordering guard, which could have let a delayed callback regress a delivered message's status backward; and zero field validations on the Message model. Backend test suite grew from 48 to 52 passing runs along the way.</p></div>
+
+      <div class="phase"><div class="row"><span class="who">Architecture diagrams</span><span class="tag">Mermaid, embedded in HLD.md</span></div>
+        <p>System/component and deployment-topology diagrams added to the docs — the system diagram is reproduced in full below.</p></div>
+
+      <div class="phase"><div class="row"><span class="who">Twilio goes live</span><span class="tag">2026-07-16</span></div>
+        <p>Real Twilio credentials configured in production. Delivery to a first live test number didn't arrive — under diagnosis, most likely a trial-account verified-number restriction.</p></div>
+
+      <div class="phase gap"><div class="row"><span class="who">Closing the loop on the original prompt</span><span class="tag">2026-07-16</span></div>
+        <p>Re-reading the original spec verbatim (to build this very infographic) surfaced that Bonus 3's literal ask — "a reflection to the message cards showing that twilio successfully delivered the message" — had been left as an open design question and never actually built on the frontend, even though the backend had supported it since Bonus 3 shipped. Fixed same-day: a color-coded delivery-status badge now appears on every message card.</p></div>
+
+    </div>
+  </section>
+
+  <section>
+    <h2 class="section">System Architecture</h2>
+    <div class="diagram-wrap">
+      <pre class="mermaid" id="arch-diagram"></pre>
+    </div>
+    <p class="diagram-note">Full source: <code>doc/architecture-diagram.mermaid</code> — also embedded in <code>doc/HLD.md</code> §3. A companion deployment-topology diagram lives in <code>doc/HLD.md</code> §7.5 / <code>doc/deployment-diagram.mermaid</code>.</p>
+  </section>
+
+  <section>
+    <h2 class="section">By the Numbers</h2>
+    <div class="metrics">
+      <div class="metric"><div class="num">3</div><div class="lbl">bonuses, all delivered</div></div>
+      <div class="metric"><div class="num">2</div><div class="lbl">full bug-blitz passes</div></div>
+      <div class="metric"><div class="num">52</div><div class="lbl">passing Minitest runs</div></div>
+      <div class="metric"><div class="num">75</div><div class="lbl">passing frontend tests</div></div>
+      <div class="metric"><div class="num">0</div><div class="lbl">Critical findings, ever</div></div>
+    </div>
+  </section>
+
+  <footer>
+    Full detail lives in <code>/doc</code>: HLD.md · tech-design.md · every qa/security/code-review report ·
+    bug-blitz-2026-07-15.md · exercise-acceptance-audit.md · architecture-diagram.mermaid · deployment-diagram.mermaid ·
+    team-collaboration.html (initial build phase in more depth)
+  </footer>
+</div>
+
+<script src="https://cdnjs.cloudflare.com/ajax/libs/mermaid/10.9.1/mermaid.min.js"></script>
+<script>
+  document.getElementById('arch-diagram').textContent = `flowchart TB
+    Browser["Browser (user)"]
+
+    subgraph FE["Frontend — Angular SPA (Render Static Site)"]
+        SPA["Angular app<br/>Login/Signup, New Message, Message History"]
+    end
+
+    subgraph BE["Backend — Rails 7.1 API-only (Render Web Service)"]
+        direction TB
+        Ctrl["Controllers<br/>AuthController, MessagesController,<br/>Webhooks::TwilioStatusController"]
+        CurID["CurrentIdentity<br/>resolves signed HttpOnly cookie -> User"]
+        Svc["Services<br/>SendMessageService, ListMessagesService"]
+        DALIface["Repositories::MessageRepositoryInterface<br/>(create, find_for_owner,<br/>update_status_by_external_sid)"]
+        MongoRepo["MongoMessageRepository"]
+        MemRepo["InMemoryMessageRepository<br/>(tests / MESSAGE_REPOSITORY=in_memory)"]
+        GwIface["Gateways::SmsGatewayInterface<br/>(send_sms)"]
+        TwilioGw["TwilioSmsGateway"]
+        FakeGw["FakeSmsGateway<br/>(default; no live Twilio creds)"]
+        Container["Services::Container<br/>IoC wiring — picks concrete repo/gateway from ENV"]
+
+        Ctrl --> CurID
+        Ctrl --> Svc
+        Svc --> DALIface
+        Svc --> GwIface
+        MongoRepo -. implements .- DALIface
+        MemRepo -. implements .- DALIface
+        TwilioGw -. implements .- GwIface
+        FakeGw -. implements .- GwIface
+        Container -. wires .-> DALIface
+        Container -. wires .-> GwIface
+    end
+
+    Mongo[("MongoDB<br/>(Atlas in prod / Docker locally)")]
+    Twilio["Twilio API<br/>(SMS send + delivery-status webhook)"]
+
+    Browser <-->|"HTTPS + signed HttpOnly<br/>auth cookie"| SPA
+    SPA <-->|"JSON over fetch,<br/>withCredentials"| Ctrl
+    MongoRepo <--> Mongo
+    TwilioGw -->|"send_sms (outbound)"| Twilio
+    Twilio -->|"POST /api/v1/webhooks/twilio/status<br/>(signed X-Twilio-Signature)"| Ctrl
+
+    classDef external fill:#eee,stroke:#999,color:#333;
+    class Browser,Mongo,Twilio external;`;
+
+  mermaid.initialize({ startOnLoad: true, theme: 'dark' });
+</script>
+</body>
+</html>

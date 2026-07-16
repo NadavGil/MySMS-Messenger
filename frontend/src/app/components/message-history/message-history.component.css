@@ -35,8 +35,50 @@ h2 {
   margin-bottom: 0.5rem;
 }
 
+.message-number-group {
+  display: flex;
+  align-items: baseline;
+  gap: 0.5rem;
+  flex-wrap: wrap;
+}
+
 .message-number {
   font-weight: bold;
+}
+
+/* Bug blitz (2026-07-16): the "reflection on the message cards" the
+   original spec asked Bonus 3 to show — status badge, color-coded by
+   delivery outcome. */
+.message-status {
+  display: inline-block;
+  font-size: 0.75rem;
+  font-weight: 600;
+  padding: 0.1rem 0.5rem;
+  border-radius: 999px;
+  text-transform: uppercase;
+  letter-spacing: 0.02em;
+  white-space: nowrap;
+}
+
+.message-status.status-delivered {
+  background: #e3f7e9;
+  color: #1e7b3a;
+}
+
+.message-status.status-sent {
+  background: #e6effe;
+  color: #1a56c4;
+}
+
+.message-status.status-queued {
+  background: #f0f0f0;
+  color: #555;
+}
+
+.message-status.status-failed,
+.message-status.status-undelivered {
+  background: #fdeceb;
+  color: #b00020;
 }
 
 .message-timestamp {

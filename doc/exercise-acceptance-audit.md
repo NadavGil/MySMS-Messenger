@@ -345,11 +345,19 @@ held up in practice with zero schema changes.
   gateway spec, and repository shared-example extensions are hand-authored
   and unexecuted here, matching every other RSpec file in this project (no
   rubygems.org access).
-- No frontend change was made or is required this pass — `status` was
-  already serialized by `MessagesController#serialize` before this change,
-  so an updated status is visible on the next `GET /api/v1/messages` with no
-  SPA code change. Rendering delivery-status in the UI is an open question
-  for the director (`tech-design.md` §15.12, Q4).
+- **Frontend status display added 2026-07-16.** The original exercise spec's
+  Bonus 3 line is explicit: "Add a **reflection to the message cards**
+  showing that twilio successfully delivered the message." This had been
+  left as an open question (`tech-design.md` §15.12, Q4) rather than
+  actually implemented — `status` was serialized by
+  `MessagesController#serialize` from the start of Bonus 3, but nothing in
+  the SPA ever rendered it. Surfaced while re-reading the original spec
+  verbatim to build a project-journey infographic. Fixed with a
+  color-coded status badge on each message card
+  (`MessageHistoryComponent`/`message-history.component.html`/`.css`) — no
+  API or backend change needed. Along the way, also fixed a stale
+  `MessageStatus` TS type that still only listed the pre-Bonus-3 values
+  (`queued`/`sent`/`failed`, missing `delivered`/`undelivered`).
 
 ---
 

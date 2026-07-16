@@ -1,12 +1,27 @@
 import { CommonModule } from '@angular/common';
 import { Component, OnInit } from '@angular/core';
 import { Observable } from 'rxjs';
-import { Message } from '../../models/message.model';
+import { Message, MessageStatus } from '../../models/message.model';
 import { MessagesStoreService } from '../../services/messages-store.service';
 import { UtcTimestampPipe } from '../../pipes/utc-timestamp.pipe';
 import { codepointLength } from '../../utils/text-length.util';
 
 const BODY_MAX_LENGTH = 250;
+
+// Bug blitz (2026-07-16) fix: closes the literal Bonus 3 requirement from
+// the original exercise spec ("Add a reflection to the message cards
+// showing that twilio successfully delivered the message") — the backend
+// webhook has updated `status` in the DB since Bonus 3 landed, and
+// MessagesController#serialize already returned it on every
+// GET /api/v1/messages, but the frontend never rendered it anywhere. Human
+// labels + a CSS status class per value (message-history.component.css).
+const STATUS_LABELS: Record<MessageStatus, string> = {
+  queued: 'Queued',
+  sent: 'Sent',
+  delivered: 'Delivered',
+  undelivered: 'Undelivered',
+  failed: 'Failed',
+};
 
 /**
  * "Message History (N)" panel (tech-design.md §8.4).
@@ -55,5 +70,15 @@ export class MessageHistoryComponent implements OnInit {
    */
   bodyLength(body: string): number {
     return codepointLength(body);
+  }
+
+  /** Human-readable label for a message's delivery status. */
+  statusLabel(status: MessageStatus): string {
+    return STATUS_LABELS[status] ?? status;
+  }
+
+  /** CSS modifier class for a message's delivery status (color-coding). */
+  statusClass(status: MessageStatus): string {
+    return `status-${status}`;
   }
 }

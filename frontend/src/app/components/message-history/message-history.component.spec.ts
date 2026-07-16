@@ -76,6 +76,31 @@ describe('MessageHistoryComponent', () => {
     expect(firstCard.querySelector('.message-char-count')?.textContent?.trim()).toBe('11/250');
   });
 
+  // Bug blitz (2026-07-16) fix: closes the literal Bonus 3 requirement from
+  // the original exercise spec ("a reflection to the message cards showing
+  // that twilio successfully delivered the message") — status was already
+  // in the API response but was never rendered anywhere in the template.
+  it('renders a status badge per message, reflecting the Twilio delivery outcome', () => {
+    const mixedStatusMessages: Message[] = [
+      { ...sampleMessages[0], status: 'delivered' },
+      { ...sampleMessages[1], status: 'failed' },
+    ];
+
+    fixture.detectChanges();
+    const req = httpMock.expectOne(baseUrl);
+    req.flush({ count: mixedStatusMessages.length, messages: mixedStatusMessages });
+    fixture.detectChanges();
+
+    const cards = fixture.nativeElement.querySelectorAll('.message-card');
+    const firstStatus: HTMLElement = cards[0].querySelector('.message-status');
+    const secondStatus: HTMLElement = cards[1].querySelector('.message-status');
+
+    expect(firstStatus.textContent?.trim()).toBe('Delivered');
+    expect(firstStatus.classList).toContain('status-delivered');
+    expect(secondStatus.textContent?.trim()).toBe('Failed');
+    expect(secondStatus.classList).toContain('status-failed');
+  });
+
   it('counts emoji by codepoint, not UTF-16 code unit, in the per-message char count (QA report round1 N1)', () => {
     // '🎉' is a single Unicode codepoint but a UTF-16 surrogate pair
     // (raw `.length` === 2). Codepoint-accurate counting must report 6.

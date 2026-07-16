@@ -12,7 +12,10 @@
       @for (message of messages$ | async; track trackById($index, message)) {
         <li class="message-card">
           <div class="message-card-header">
-            <span class="message-number">{{ message.to_number }}</span>
+            <span class="message-number-group">
+              <span class="message-number">{{ message.to_number }}</span>
+              <span class="message-status" [class]="statusClass(message.status)">{{ statusLabel(message.status) }}</span>
+            </span>
             <span class="message-timestamp">{{ message.created_at | utcTimestamp }}</span>
           </div>
           <div class="message-body">{{ message.body }}</div>

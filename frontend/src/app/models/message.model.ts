@@ -2,7 +2,14 @@
  * TS interfaces mirroring the API contract in tech-design.md §6.
  */
 
-export type MessageStatus = 'queued' | 'sent' | 'failed';
+// Bug blitz (2026-07-16) fix: this type only listed the pre-Bonus-3 values
+// and was never updated when the backend's MessageDocument::STATUSES grew
+// to include the Twilio delivery-status webhook's terminal values (Bonus 3,
+// tech-design.md §15.4) — a stale type, not a runtime bug (TS structural
+// typing meant a real 'delivered' string from the API still flowed through
+// fine), but it meant nothing in the frontend could name these statuses
+// without an `as any` cast. Now matches the backend vocabulary exactly.
+export type MessageStatus = 'queued' | 'sent' | 'failed' | 'delivered' | 'undelivered';
 
 /** A single persisted message, as returned by the API (§6.1 / §6.2). */
 export interface Message {

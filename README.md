@@ -114,29 +114,37 @@ brute-force and enumeration-abuse protection for the new auth endpoints.
 
 ## Twilio status (CP11)
 
-**Twilio credentials are not yet configured.** CityHive has not supplied
-live Twilio credentials, so `SMS_PROVIDER` defaults to `fake`
-(`Gateways::FakeSmsGateway`), which logs only send metadata (never the raw
-message body) and returns a synthetic success SID without any network call —
-the full send/list flow is demonstrable end-to-end without real SMS
-delivery.
+**Live Twilio credentials are now configured in production (2026-07-16).**
+`SMS_PROVIDER=twilio` is set on the deployed backend with a real
+`TWILIO_ACCOUNT_SID` / `TWILIO_AUTH_TOKEN` / `TWILIO_FROM_NUMBER` (entered
+directly in the Render dashboard — never committed to this repo, per the
+existing "never hardcoded, never logged" design below). `Gateways::FakeSmsGateway`
+remains the default everywhere else (local dev, tests, and anywhere
+`SMS_PROVIDER` isn't explicitly set to `twilio`) — it logs only send
+metadata (never the raw message body) and returns a synthetic success SID
+without any network call, so the full send/list flow stays demonstrable
+end-to-end with no Twilio account at all.
 
-`Gateways::TwilioSmsGateway` is **implemented but unverified — needs live
-credentials from the client.** It is fully wired behind
-`Services::Container` (config-only swap via `SMS_PROVIDER=twilio`, no code
-changes) and reads `TWILIO_ACCOUNT_SID` / `TWILIO_AUTH_TOKEN` /
-`TWILIO_FROM_NUMBER` from ENV only — never hardcoded, never logged.
-`config/initializers/container.rb` fails loudly at boot (a clear
-`ArgumentError` naming the missing var(s)) if `SMS_PROVIDER=twilio` is set
-without all three credentials present, rather than deferring the failure to
-the first real send attempt. It has **not been tested against the live
-Twilio API** in this pass (no creds available) — see `doc/tech-design.md` §4.2
-and the risk noted in `doc/HLD.md` §9. Once the client supplies credentials,
-set them plus `SMS_PROVIDER=twilio` and restart — no code changes required.
+`Gateways::TwilioSmsGateway` is fully wired behind `Services::Container`
+(config-only swap via `SMS_PROVIDER=twilio`, no code changes) and reads its
+three credentials from ENV only. `config/initializers/container.rb` fails
+loudly at boot (a clear `ArgumentError` naming the missing var(s)) if
+`SMS_PROVIDER=twilio` is set without all three present, rather than
+deferring the failure to the first real send attempt.
+
+**Current status: a live test send did not arrive at the destination
+phone.** The app's own send call to the Twilio API completed normally (no
+error surfaced in-app), but the message was not confirmed received. The
+most likely cause is a Twilio **trial account** restriction — trial
+accounts can only deliver to phone numbers verified under Console → Phone
+Numbers → Verified Caller IDs — with a Geo Permissions restriction on the
+destination country as the other likely candidate. Diagnosis via Twilio
+Console → Monitor → Logs → Messaging (which reports the exact status/error
+code per message) is in progress; this note will be updated once resolved.
 
 Rate limiting (`rack-attack`, `config/initializers/rack_attack.rb`) throttles
-`POST /api/v1/messages` to 10 requests/minute per identity before any real
-Twilio credentials go live, to bound cost-abuse risk.
+`POST /api/v1/messages` to 10 requests/minute per identity, to bound
+cost-abuse risk now that real Twilio credentials are live.
 
 ## Delivery-status webhooks (Bonus 3)
 
@@ -160,6 +168,12 @@ Twilio webhook: `POST /api/v1/webhooks/twilio/status` →
   not persisted as status changes.
 - Idempotent by design: a duplicate callback for the same message is a
   harmless repeat update, not a bug.
+- **Now actually visible in the UI (2026-07-16).** The original exercise
+  spec's Bonus 3 line asks for "a reflection to the message cards showing
+  that twilio successfully delivered the message" — this had been left as
+  an open question and never implemented on the frontend, despite the
+  backend supporting it since Bonus 3 landed. Each message card now shows
+  a color-coded status badge (queued/sent/delivered/undelivered/failed).
 - **Live-verified end-to-end** using `backend/script/test_webhook.sh`
   (below): a real message sent through the live app, a genuinely valid
   signature built independently with `openssl`, posted to the live
@@ -191,13 +205,20 @@ design.)
 ## Bug blitz (2026-07-15)
 
 A full cross-cutting bug-hunt pass (backend, frontend, deployment config,
-test suites) was run after all three bonus features went live. Two Medium
-backend issues (SMS content leaking into request logs; an unhandled 500 on
-a rare signup race) and one High frontend issue (stale message history
-visible across logins on a shared browser) were found and fixed, plus a
-stale/failing frontend regression test and a `render.yaml` drift issue
-(missing Bonus 3 env vars, stale placeholder service names). Full writeup:
-`doc/bug-blitz-2026-07-15.md`.
+test suites) was run after all three bonus features went live, followed
+same-day by a second pass closing out everything that pass had left as
+Low/informational. Findings fixed across both passes: two Medium backend
+issues (SMS content leaking into request logs; an unhandled 500 on a rare
+signup race), one High frontend issue (stale message history visible
+across logins on a shared browser), a stale/failing frontend regression
+test, a `render.yaml` drift issue (missing Bonus 3 env vars, stale
+placeholder service names), a previously-unbounded message-history query
+(now capped per owner), a Twilio status webhook with no ordering guard (a
+delayed/out-of-order callback could have regressed an already-`delivered`
+message's status backward — fixed with a monotonicity guard), and missing
+field validations on `MessageDocument`. Full writeup:
+`doc/bug-blitz-2026-07-15.md`. Backend test suite: 52 passing Minitest runs
+(up from 48 before the bug blitz), zero new failures.
 
 ## Deploying (Bonus 2 — Render + MongoDB Atlas)
 

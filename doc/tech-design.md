@@ -1673,10 +1673,16 @@ posture as CP11/CP22** (see §15.12).
    `mysms-messenger-server.onrender.com`; §14 still uses the placeholder name
    `mysms-messenger-api` — please confirm the actual service name so this URL,
    `CORS_ORIGINS`, and `apiBaseUrl` all agree.)
-4. **Frontend delivery-status UI.** This pass is backend-only. `status`
-   (`delivered`/`undelivered`/etc.) is already in the `GET /api/v1/messages`
-   response but not rendered by the SPA. Want a follow-up story to show delivery
-   state on each history card, or is API-level status sufficient for now?
+4. **Frontend delivery-status UI.** ~~This pass is backend-only.~~ **Resolved
+   (2026-07-16):** the original exercise spec explicitly asked for "a
+   reflection to the message cards showing that twilio successfully
+   delivered the message" — re-reading the spec while building a
+   project-journey infographic surfaced that this had been left as an open
+   question and never actually implemented, despite the backend having
+   supported it since Bonus 3. Added a color-coded status badge
+   (`MessageHistoryComponent.statusLabel`/`.statusClass`,
+   `message-history.component.html`/`.css`) to each history card — no API
+   change needed, since `status` was already serialized.
 5. **Intermediate statuses.** We intentionally do **not** persist Twilio's
    transient `sending`/`queued` callback values (only `sent`/`failed`/
    `delivered`/`undelivered` are stored, §15.4). Confirm the final-state-only
